@@ -1,0 +1,22 @@
+# Python bytecode files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment folder
+venv/
+
+# PyCharm project settings
+.idea/
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# Log files
+*.log
+*.tmp
+
+# OS-specific files
+.DS_Store   # macOS Finder
+Thumbs.db   # Windows thumbnail cache
