@@ -1,3 +1,6 @@
+"""Class to interface with the NIST20 database and produce a dictionary of identified features that have their data stored
+    in RelevantFeature objects"""
+
 import os
 from pyopenms import *
 

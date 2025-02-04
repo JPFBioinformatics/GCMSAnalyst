@@ -1,3 +1,6 @@
+"""Class to use pyopenms to deconvolute an mzML file produced by the MzMLProcessor class so we can submit the
+    cleaned data to the NISTSearch class for identification"""
+
 import os
 from pyopenms import *
 

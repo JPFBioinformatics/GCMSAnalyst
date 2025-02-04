@@ -11,4 +11,3 @@ class RelevantFeature:
 
     def __repr__(self):
         return f"RelevantFeature(name = {self.name}, retention_time = {self.retention_time}, top_ions = {self.top_ions}, match_score = {self.match_score})"
-

@@ -1,3 +1,6 @@
+"""Class that will use the template dictionary produced by the NISTSearch class to collect data from the origonal mzML
+    file and export it to an excel file for further analysis"""
+
 import os
 import pandas as pd
 from pyopenms import *

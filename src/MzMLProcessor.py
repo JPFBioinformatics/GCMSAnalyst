@@ -1,4 +1,4 @@
-"""Class that will accept a .d GCMS directory asn an input and convert it to .mzML"""
+"""Class that will accept a .d GCMS directory asn an input and convert it to .mzML for use in analysis"""
 import subprocess
 import os
 
