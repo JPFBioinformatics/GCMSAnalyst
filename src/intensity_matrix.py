@@ -11,6 +11,8 @@ class IntensityMatrix:
         self.intensity_matrix = intensity_matrix
         self.unique_mzs = unique_mzs
         self.spectra_metadata = spectra_metadata
+        self.noise_factor = None
+        self.abundance_threshold = None
 
     """Getter and setter methods"""
     #region Getter/Setters
@@ -205,4 +207,203 @@ class IntensityMatrix:
         return array
     #endregion
 
-    """Chromatogram Smoothing"""
+    # calculates At value to replace 0 values with
+    def calculate_threshold(self, intensity_matrix):
+
+        """
+        Counts the number of zero to nonzero transtions for each m/z in 10 approximately equally sized time segments then takes the square root
+        of these values and multiplies it by the minimum abundance measured in the entire intensity matrix, use this value to replace 0 values
+
+        Parameters:
+            intensity_matrix (np.ndarray): 2D numpy array where each row corrosponds to a m/z chromatogram intensity profile and each column
+                                           corrosponds to a scan
+        Returns:
+            threshold_values (np.ndarray): 2D numpy array with 10 columns (1 per segment) and a row for each unique m/z in the input matrix
+                                           each entry corrosponds to the calculated threshold value for that m/z in that segment
+        """
+
+        # the minimum measured abundance in the intensity matrix
+        min_value = np.min(intensity_matrix[intensity_matrix>0])
+
+        # creates a 2d array to store the threshold transitions, min value in the input array/sqrt(fraction of transitions in segment in row)
+        threshold_values = np.empty((len(self.unique_mzs),10))
+
+        # split the array into 10 approximately equal time segments
+        segments = np.array_split(intensity_matrix, 10, axis=1)
+
+        # for each segment count the number of ties a 0 value is followed by a nonzero value and store in transitions array
+        for seg_idx,segment in enumerate(segments):
+            for row_idx, row in enumerate(segment):
+                transitions = (row[:-1] == 0 & row[1:] > 0)
+                # number of 0 to nonzero transitions in row
+                num_transitions = np.sum(transitions)
+                # length of the segment
+                segment_length = segment.shape[1]
+                # fraction of all scans in segment that are involved in m/z transtion
+                threshold_values[row_idx, seg_idx] = num_transitions / segment_length
+
+        # takes the squar root of all transition fraction values
+        threshold_values **= 0.5
+
+        # multiplies these square rooted values by the min value in matrix, resulting in At matrix
+        threshold_values *= min_value
+
+        return threshold_values
+
+    # counts the number of times the values of an array "cross" a given average value
+    def count_crossings(row,avg):
+        crossings = 0
+        for i in range(len(row)-1):
+            if (row[i] < avg and row[i+1] > avg) or (row[i] > avg and row[i+1] < avg):
+                crossings += 1
+        return crossings
+
+    # calculates the noise factor for the entire intensity_matrix
+    def calculate_noise_factor(self, intensity_matrix):
+        
+        # adds a row to be the TIC, sum of all m/z values for each scan
+        sum_row = np.sum(intensity_matrix, axis=0)
+        matrix = np.vstack(intensity_matrix,sum_row)
+
+        # determines how many 13 scan segments that we will have, if the last segment is not full it is excluded from calculations
+        num_segments = matrix.shape[1] // 13
+
+        # create an empty list of segments, each of which will be a numpy array with a row for each m/z chromatogram and a column for each 13 scan segment
+        segments = []
+
+        #loop over the number of segments creating each segment in segments as we go
+        for i in range(num_segments):
+            start = i*13
+            end = (i+1)*13
+            segment = matrix[:, start:end]
+            
+            # filters out any rows that contain 0 values
+            removed_zeros = segment[~np.any(segment == 0, axis = 1)]
+            
+            # stores the segments that have sufficient number of "crossings"
+            crossing_filtered = []
+
+            # filters out any rows that "cross" the average intensity 6 or fewer times
+            for row in removed_zeros:
+                avg = np.mean(row)
+                crossings = IntensityMatrix.count_crossings(row,avg)
+
+                if crossings > 6:
+                    crossing_filtered.append(row)
+                
+            segments.append(np.array(crossing_filtered))
+        
+        # list to hold all the noise factors for each row of each segment 
+        noise_factors = []
+
+        # iterate through each segment
+        for segment in segments:
+            # stores the median deviation for current segment
+            segment_nfs = []
+
+            # iterate through all rows of the segment
+            for row in segment:
+                # calculate noise factor for current row
+                current_nf = IntensityMatrix.calculate_row_nf(row)
+                # append result to median_devs list
+                segment_nfs.append(current_nf)
+
+            # adds the segment noise factors to the master list
+            noise_factors.append(segment_nfs)
+
+            return np.median(noise_factors)
+    
+    # calculates and returns the median deviation for a given 1D array
+    def calculate_row_nf(self, row):
+
+        # calculate the mean of the row
+        mean = np.mean(row)
+        sqrt_of_mean = mean ** 0.5
+
+        # calculate deviation from the mean for all members of row
+        deviations = np.abs(row-mean)
+
+        # return the median of the deviations / sqrt of the mean (Nf for that row)
+        return np.median(deviations)/sqrt_of_mean
+
+    # calculates the uniqueness value for each m/z in 10 approximately equal time chunks
+    def calculate_uniqueness(self, intensity_matrix):
+        
+        # sores the uniqueness values for each m/z for each segment
+        uniqueness_values = np.zeros((len(self.unique_mzs),10))
+        
+        # splits array into 10 approximately equal segments
+        segments = np.array_split(intensity_matrix)
+
+        for seg_idx,segment in enumerate(segments):
+            for row_idx, row in enumerate(segment):
+
+                # counts nonzero elements in this row
+                counter = np.count_nonzero(row)
+                # length of the row
+                row_size = len(row)
+
+                # calculates the fraction of entries in row that are nonzero
+                nonzero_fraction = counter/row_size
+
+                # appends nonzero_fraction to proper place in the uniqueness_values matrix
+                uniqueness_values[row_idx,seg_idx] = nonzero_fraction
+        
+        return uniqueness_values
+
+    # calculates a tentative baseline for a percieved component
+    def tentative_baseline(self, component_aray):
+
+        # creates an x-values array to use later for baseline computing, each x value is just an index value for input array
+        x = np.arrange(len(component_aray))
+
+        # get the index of the peak maximum
+        max_idx = np.argmax(component_aray)
+
+        # get the index values of the minimum on the left and on the right of the max
+        left_idx = np.argmin(component_aray[:max_idx])
+        right_idx = np.argmin(component_aray[max_idx:]) + max_idx
+
+        # get the intensity values associated with both these minimums
+        left_val = component_aray[left_idx]
+        right_val = component_aray[right_idx]
+
+        # get linear baseline variables
+        m = (right_val - left_val) / (right_idx - left_idx) 
+        b = left_val - m * left_idx
+
+        # generate tentative baseline array
+        tentative_baseline = m * x + b
+
+        return tentative_baseline
+
+    # calculates a least squars baseline based on a component array and its tentative baseline
+    def least_squares_baseline(self, component_array):
+        
+        # gets the tentative baseline for the component array
+        tentative_baselne = IntensityMatrix.tentative_baseline(component_array)
+
+        # recalculates abundances as height above tentative baseline
+        adjusted_abundances = component_array - tentative_baselne
+
+        # get the indicies for the smallest 50% of values in the array
+        sorted_indices = np.argsort(adjusted_abundances)
+        smallest_indices = sorted_indices[:len(component_array)//2]
+
+        # get y values (abundances) for least squares baseline estimation
+        smallest_abundances = component_array[smallest_indices]
+        
+        # linear least squares fitting 
+        m, b = np.polyfit(smallest_indices, smallest_abundances, 1)
+
+        # generate a bseline for the entire compoonent array
+        bseline = m * np.arange(len(component_array)) + b
+        
+        return baseline
+
+    # calculates the sharpness for a single set of points
+    def calculate_sharpness(self, row, max_idx, end_idx):
+        
+        sharpness = (row[max_idx] - row[end_idx]) / (abs(max_idx - end_idx) * self.noise_factor * (row[max_idx]**0.5))
+
+        return sharpness

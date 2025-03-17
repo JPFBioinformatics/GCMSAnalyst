@@ -64,6 +64,48 @@ class MzMLProcessor:
         decompressed = zlib.decompress(decoded)
         return np.frombuffer(decompressed, dtype=np.float64)
 
+    """Binns masses -0.3 to +0.7 of integer values"""
+    @staticmethod
+    def bin_masses(unique_mzs, intensity_matrix):
+        
+        # create a list to hold binned_mz values
+        binned_mzs = []
+
+        # determine int bin values such that n is added to binned_mzs if n-0.3 < mz <= n+0.7
+        for mz in unique_mzs:
+            if (mz + 0.3) > (int(mz) + 1) and int(mz+1) not in binned_mzs:
+                binned_mzs.append(int(mz)+1)
+            if (mz - 0.7) <= int(mz) and int(mz) not in binned_mzs:
+                binned_mzs.append(int(mz))
+        
+        # dictionary that will hold the binned_mz : indices of unique_mzs to bin
+        bin_tracker = {}
+
+        # intialize bin_tracker with empty lists for each binned_mz value
+        for mz in binned_mzs:
+            bin_tracker[mz] = []
+        
+        # iterate over unique_mzs
+        for idx, unique_mz in enumerate(unique_mzs):
+            # find correct bin for unique_mz value and add the index of that value to bin_tracker
+            for binned_mz in binned_mzs:
+                if (binned_mz - 0.3) < unique_mz <= (binned_mz + 0.7):
+                    bin_tracker[binned_mz].append(idx)
+
+        # create a new intensity matrix to hold binned values using the same number of columns but now with rows corrsponding to binned_mzs instead of unique_mzs
+        binned_matrix = np.zeros(len(binned_mzs), intensity_matrix.shape[1])
+
+        # iterate over bin_tracker and sum rows of intesity_matrix as directed
+        for row_idx, (binned_mz, indices_to_bin) in enumerate(bin_tracker):
+
+            # sum intensiteis of intensity_matrix for each time point
+            summed_intensity = np.sum(intensity_matrix[indices_to_bin], axis=0)
+
+            # add summed intensities to new matrix
+            binned_matrix[row_idx] = summed_intensity
+
+        return(binned_mzs, binned_matrix)
+
     """Extracts spectra metadata (scan start time, scan number, TIC value) and builds a matrix where each spectrum is
     represented by a column and each unique m/z is represented by a row.  If a spectrum does not include a value for an 
     m/z then it will be stored as a 0."""
@@ -147,4 +189,10 @@ class MzMLProcessor:
                 if row_idx is not None:
                     intensity_matrix[row_idx, col_idx] = intensity
 
-        return IntensityMatrix(intensity_matrix, unique_mzs, spectra_metadata)
+        # bin the intensity matrix and unique_mzs
+        binned_mzs, binned_matrix = MzMLProcessor.bin_masses(unique_mzs, intensity_matrix)
+
+        return IntensityMatrix(binned_matrix, binned_mzs, spectra_metadata)
+
+    
+        
