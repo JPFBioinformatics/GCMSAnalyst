@@ -1,10 +1,8 @@
-"""Class for storage and cleaning of intensity matrix extracted by mzml_processor"""
-
 import numpy as np
 from peakutils import baseline
-from scipy.signal import savgol_filter
+from scipy.signal import savgol_filter, find_peaks
 
-
+"""Class for storage and cleaning of intensity matrix extracted by mzml_processor"""
 class IntensityMatrix:
 
     def __init__(self, intensity_matrix, unique_mzs, spectra_metadata):
@@ -77,7 +75,7 @@ class IntensityMatrix:
 
         return final_array
 
-    # region Helper Functions
+    # region Baseline Helpers
     @staticmethod
     def correct_baseline(intensity_array, deg = 8, chunks = 1, low_chunk = 100):
 
@@ -250,15 +248,7 @@ class IntensityMatrix:
 
         return threshold_values
 
-    # counts the number of times the values of an array "cross" a given average value
-    def count_crossings(row,avg):
-        crossings = 0
-        for i in range(len(row)-1):
-            if (row[i] < avg and row[i+1] > avg) or (row[i] > avg and row[i+1] < avg):
-                crossings += 1
-        return crossings
-
-    # calculates the noise factor for the entire intensity_matrix
+    # calculates the noise factor (Nf) for the entire intensity_matrix
     def calculate_noise_factor(self, intensity_matrix):
         
         # adds a row to be the TIC, sum of all m/z values for each scan
@@ -313,6 +303,15 @@ class IntensityMatrix:
 
             return np.median(noise_factors)
     
+    # region Nf Helpers
+    # counts the number of times the values of an array "cross" a given average value
+    def count_crossings(row,avg):
+        crossings = 0
+        for i in range(len(row)-1):
+            if (row[i] < avg and row[i+1] > avg) or (row[i] > avg and row[i+1] < avg):
+                crossings += 1
+        return crossings
+
     # calculates and returns the median deviation for a given 1D array
     def calculate_row_nf(self, row):
 
@@ -325,6 +324,114 @@ class IntensityMatrix:
 
         # return the median of the deviations / sqrt of the mean (Nf for that row)
         return np.median(deviations)/sqrt_of_mean
+    # endregion
+
+    # finds local maxima for a given 1D array
+    def find_maxima(self, array):
+        
+        # grabs noise_factor for use in calculations
+        nf = self.noise_factor
+
+        # exclueds the first and last 12 point from the search to prevent further errors
+        range = array[12:-12]
+
+        # finds the local maxima of the given array, stores their index
+        max_idxs, _ = find_peaks(range)
+        # shifts indices found in range for use in origonal array
+        max_idxs += 12
+        
+        # list to hold dictionary entries containing left_bound, right_bound and center for each maxima
+        maxima = []
+
+        # go through each maxima in list, find its deconvolution window and check if sinal is high enough to be included
+        for max in max_idxs:
+
+            # find the left bound of the deconvolution window
+            left_bound = self.find_bound(array,max,-1)
+
+            # find the right bound of the deconvolution window
+            right_bound = self.find_bound(array,max,1)
+
+            max_bounds = {
+                'left_bound' : left_bound,
+                'right_bound' : right_bound,
+                'center' : max
+            }
+
+            maxima.append(max_bounds)
+
+        # returns list of dictionary entries containing left bound, right bound, and center for each max (index values)
+        return maxima
+
+    # finds the left or right deconvolution bound for a given maxima, step = 1 for right bound step = -1 for left bound
+    def find_bound(self, array, center, step):
+
+        nf = self.noise_factor
+        counter = 1 * step
+        min_value = array[center]
+        max_value = array[center]
+
+        # iterate up to 12 setps in given direction from center
+        while counter <= 12:
+            
+            # if the value at this step is less than the current min, set the min to this value
+            if array[center+counter] < min_value:
+                min_value = array[center+counter]
+
+            # if the value at this step is less than 5% of close window here
+            if array[center+counter] < 0.05*max_value:
+                return center+counter
+            
+            # if the value at this step is more than 5 nf greater than the minimum close the window at the previous step
+            if array[center+counter] > 5*nf+min_value:
+                return center+counter-step
+            
+            # increment counter
+            counter += step
+
+        # if no previous checks returned a value close window at 12 steps from the max
+        return center+step*12
+    
+    #def reject_peak(self, array, center, left_bound, right_bound):
+
+
+    # finds a quadratic fit for a set of 3 points, returns a dictionary 3 x_values, 3 y_values (based on quadratic fit) and the a, b, c coefficients for the fit
+    def quadratic_fit(self, row_idx, center_idxs):
+
+        # pulls the row we are working on from the intensity matrix
+        row = self.intensity_matrix[row_idx]
+
+        # array for holding the results
+        results = []
+
+        # loops over all indices in center_idxs and calcuates their quadratic fit
+        for center in center_idxs:
+            
+            # x values for fit, the center index and its two direct neighbors
+            x_points = np.array([center-1, center, center+1])
+            # y values for fit, from row corrosponding to x values
+            y_points = row[x_points]
+
+            # perform quadratic numpy polyfit, returning coefficients in a,b,c for ax^2 + bx + c form
+            coeffs = np.polyfit(x_points, y_points, 2)
+            a,b,c = coeffs
+
+            # calcluate the precise maxima of the fit
+            max_x = -b/(2*a)
+            # array of left point(max_x-1), max, and right point (max_x +1)
+            x_values = np.array([max_x-1, max_x, max_x+1])
+            # array of y values corrosponding to x_values 
+            y_values = a*x_values**2 + b*x_values + c
+
+            fit_result = {
+                'x_values' : x_values,
+                'y_values' : y_values,
+                'coeffs' : coeffs
+            }
+            
+            results.append(fit_result)
+
+        return results
 
     # calculates the uniqueness value for each m/z in 10 approximately equal time chunks
     def calculate_uniqueness(self, intensity_matrix):
@@ -397,7 +504,7 @@ class IntensityMatrix:
         m, b = np.polyfit(smallest_indices, smallest_abundances, 1)
 
         # generate a bseline for the entire compoonent array
-        bseline = m * np.arange(len(component_array)) + b
+        baseline = m * np.arange(len(component_array)) + b
         
         return baseline
 

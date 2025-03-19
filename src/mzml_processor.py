@@ -92,11 +92,13 @@ class MzMLProcessor:
                 if (binned_mz - 0.3) < unique_mz <= (binned_mz + 0.7):
                     bin_tracker[binned_mz].append(idx)
 
+        _ , num_cols = np.shape(intensity_matrix)
+
         # create a new intensity matrix to hold binned values using the same number of columns but now with rows corrsponding to binned_mzs instead of unique_mzs
-        binned_matrix = np.zeros(len(binned_mzs), intensity_matrix.shape[1])
+        binned_matrix = np.zeros((len(binned_mzs), int(num_cols)))
 
         # iterate over bin_tracker and sum rows of intesity_matrix as directed
-        for row_idx, (binned_mz, indices_to_bin) in enumerate(bin_tracker):
+        for row_idx, (binned_mz, indices_to_bin) in enumerate(bin_tracker.items()):
 
             # sum intensiteis of intensity_matrix for each time point
             summed_intensity = np.sum(intensity_matrix[indices_to_bin], axis=0)
