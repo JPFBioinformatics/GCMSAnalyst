@@ -251,6 +251,7 @@ class IntensityMatrix:
         return threshold_values
 
     # region Noise Factor Calculation
+
     # calculates the noise factor (Nf) for the entire intensity_matrix
     def calculate_noise_factor(self, intensity_matrix):
         
@@ -306,9 +307,8 @@ class IntensityMatrix:
 
             return np.median(noise_factors)
     
-    # region Nf Helpers
     # counts the number of times the values of an array "cross" a given average value
-    def count_crossings(row,avg):
+    def count_crossings(self,row,avg):
         crossings = 0
         for i in range(len(row)-1):
             if (row[i] < avg and row[i+1] > avg) or (row[i] > avg and row[i+1] < avg):
@@ -327,24 +327,38 @@ class IntensityMatrix:
 
         # return the median of the deviations / sqrt of the mean (Nf for that row)
         return np.median(deviations)/sqrt_of_mean
-    # endregion
 
     # endregion
 
     # region Finding Maxima
 
-    # finds local maxima for a given 1D array
-    def find_maxima(self, array):
+    # finds the peaks (maxima and bounds) for each row of a given intensity matrix and the tic
+    def find_peaks(self, intensity_matrix):
         
-        # grabs noise_factor for use in calculations
-        nf = self.noise_factor
+        # adds a TIC row
+        sum_row = np.sum(intensity_matrix, axis=0)
+        matrix = np.vstack(intensity_matrix,sum_row)
 
-        # exclueds the first and last 12 point from the search to prevent further errors
+        # array to hold the lists of peak values, one list for each m/z row 
+        peaks = np.empty_like(matrix.shape[0])
+
+        for idx,row in enumerate(matrix):
+
+            row_peaks = self.find_maxima(row)
+            peaks[idx] = row_peaks
+        
+        return peaks
+
+    # finds local maxima and bounds of peaks for a given 1D array
+    def find_maxima(self, array):
+
+        # Excludes the first and last 12 points from the search to prevent bounding errors
         range = array[12:-12]
 
         # finds the local maxima of the given array, stores their index
-        max_idxs, _ = find_peaks(range)
-        # shifts indices found in range for use in origonal array
+        max_idxs, _ = find_peaks(range, height = self.noise_factor * 5)
+
+        # Shifts indices found in the range for use in the original array
         max_idxs += 12
         
         # list to hold dictionary entries containing left_bound, right_bound and center for each maxima
@@ -355,7 +369,6 @@ class IntensityMatrix:
 
             # find the left bound of the deconvolution window
             left_bound = self.find_bound(array,max,-1)
-
             # find the right bound of the deconvolution window
             right_bound = self.find_bound(array,max,1)
 
@@ -373,20 +386,20 @@ class IntensityMatrix:
     # finds the left or right deconvolution bound for a given maxima, step = 1 for right bound step = -1 for left bound
     def find_bound(self, array, center, step):
 
-        nf = self.noise_factor
+        nf = self.calculate_noise_factor(array)
         counter = 1 * step
         min_value = array[center]
         max_value = array[center]
 
         # iterate up to 12 setps in given direction from center
-        while counter <= 12:
+        while counter <= 12 and counter >= -12:
             
             # if the value at this step is less than the current min, set the min to this value
             if array[center+counter] < min_value:
                 min_value = array[center+counter]
 
             # if the value at this step is less than 5% of close window here
-            if array[center+counter] < 0.05*max_value:
+            if array[center+counter] < 0.01*max_value:
                 return center+counter
             
             # if the value at this step is more than 5 nf greater than the minimum close the window at the previous step
@@ -469,21 +482,24 @@ class IntensityMatrix:
     # region Baseline Calculation
 
     # calculates a tentative baseline for a percieved component
-    def tentative_baseline(self, component_aray):
+    def tentative_baseline(left_bound,right_bound,array):
+
+        # create componenet array 
+        component_array = array[left_bound:right_bound+1]
 
         # creates an x-values array to use later for baseline computing, each x value is just an index value for input array
-        x = np.arrange(len(component_aray))
+        x = np.arange(len(component_array))
 
         # get the index of the peak maximum
-        max_idx = np.argmax(component_aray)
+        max_idx = np.argmax(component_array)
 
         # get the index values of the minimum on the left and on the right of the max
-        left_idx = np.argmin(component_aray[:max_idx])
-        right_idx = np.argmin(component_aray[max_idx:]) + max_idx
+        left_idx = np.argmin(component_array[:max_idx])
+        right_idx = np.argmin(component_array[max_idx:]) + max_idx
 
         # get the intensity values associated with both these minimums
-        left_val = component_aray[left_idx]
-        right_val = component_aray[right_idx]
+        left_val = component_array[left_idx]
+        right_val = component_array[right_idx]
 
         # get linear baseline variables
         m = (right_val - left_val) / (right_idx - left_idx) 
@@ -495,10 +511,13 @@ class IntensityMatrix:
         return tentative_baseline
 
     # calculates a least squars baseline based on a component array and its tentative baseline
-    def least_squares_baseline(self, component_array, tentative_baseline):
+    def least_squares_baseline(left_bound,right_bound,array, ten_baseline):
+        
+        # create componenet array 
+        component_array = array[left_bound:right_bound+1]
 
         # recalculates abundances as height above tentative baseline
-        adjusted_abundances = component_array - tentative_baseline
+        adjusted_abundances = component_array - ten_baseline
 
         # get the indicies for the smallest 50% of values in the array
         sorted_indices = np.argsort(adjusted_abundances)

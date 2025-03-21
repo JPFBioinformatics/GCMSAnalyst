@@ -118,13 +118,13 @@ def least_squares_baseline(left_bound,right_bound,array, ten_baseline):
 def find_maxima(array):
 
     # Excludes the first and last 12 points from the search to prevent bounding errors
-    # range = array[12:-12]
+    range = array[12:-12]
 
     # finds the local maxima of the given array, stores their index
-    max_idxs, _ = find_peaks(array, height = 500)
+    max_idxs, _ = find_peaks(range, height = 500)
 
     # Shifts indices found in the range for use in the original array
-    # max_idxs += 12
+    max_idxs += 12
         
     # list to hold dictionary entries containing left_bound, right_bound and center for each maxima
     maxima = []

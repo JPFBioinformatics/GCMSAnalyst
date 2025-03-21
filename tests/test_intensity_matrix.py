@@ -55,10 +55,27 @@ print(f"Percent deviation {round(avg_deviation*100/avg_time,3)}%")
 
 # endregion
 
+# region Determining the maxima and endpoints of peaks in the distribution
+
+# create list of dict entries maxima that contain index values for left, right, and center of each detected peak
+maxima = IntensityMatrix.find_maxima(intensity_matrix)
+
+# put values in their own lists for graphing
+left_bounds = [entry['left_bound'] for entry in maxima]
+right_bounds = [entry['right_bound'] for entry in maxima]
+centers = [entry['center'] for entry in maxima]
+
+# endregion
+
 # region Graphing the TIC
 
 # create plot
 plt.plot(scan_no,tic)
+
+# add points that represent maxima and left/right bounds, maxima are black and bounds are red
+plt.scatter(centers, tic[centers], color = 'black', s = 10, zorder = 5)
+plt.scatter(left_bounds, tic[left_bounds], color = 'red', s = 10, zorder = 5)
+plt.scatter(right_bounds, tic[right_bounds], color = 'red', s = 10, zorder = 5)
 
 # set layout
 plt.title("Total Ion Current")
