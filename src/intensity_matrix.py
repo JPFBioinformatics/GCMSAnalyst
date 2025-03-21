@@ -2,7 +2,7 @@ import numpy as np
 from peakutils import baseline
 from scipy.signal import savgol_filter, find_peaks
 
-"""Class for storage and cleaning of intensity matrix extracted by mzml_processor"""
+# Class for storage and cleaning of intensity matrix extracted by mzml_processor
 class IntensityMatrix:
 
     def __init__(self, intensity_matrix, unique_mzs, spectra_metadata):
@@ -12,7 +12,6 @@ class IntensityMatrix:
         self.noise_factor = None
         self.abundance_threshold = None
 
-    """Getter and setter methods"""
     #region Getter/Setters
     @property
     def intensity_matrix(self):
@@ -52,7 +51,8 @@ class IntensityMatrix:
             self._spectra_metadata = value
     #endregion
 
-    """Baseline correction"""
+    # region OG Baseline, probably gonna delete
+    
     # Uses correct_baseline method to iteratively correct the baseline noise for a given array, not the whole matrix
     @staticmethod
     def iterative_baseline_correction(intensity_array):
@@ -205,6 +205,8 @@ class IntensityMatrix:
         return array
     #endregion
 
+    # endregion
+
     # calculates At value to replace 0 values with
     def calculate_threshold(self, intensity_matrix):
 
@@ -248,6 +250,7 @@ class IntensityMatrix:
 
         return threshold_values
 
+    # region Noise Factor Calculation
     # calculates the noise factor (Nf) for the entire intensity_matrix
     def calculate_noise_factor(self, intensity_matrix):
         
@@ -326,6 +329,10 @@ class IntensityMatrix:
         return np.median(deviations)/sqrt_of_mean
     # endregion
 
+    # endregion
+
+    # region Finding Maxima
+
     # finds local maxima for a given 1D array
     def find_maxima(self, array):
         
@@ -394,6 +401,7 @@ class IntensityMatrix:
     
     #def reject_peak(self, array, center, left_bound, right_bound):
 
+    # endregion
 
     # finds a quadratic fit for a set of 3 points, returns a dictionary 3 x_values, 3 y_values (based on quadratic fit) and the a, b, c coefficients for the fit
     def quadratic_fit(self, row_idx, center_idxs):
@@ -458,6 +466,8 @@ class IntensityMatrix:
         
         return uniqueness_values
 
+    # region Baseline Calculation
+
     # calculates a tentative baseline for a percieved component
     def tentative_baseline(self, component_aray):
 
@@ -485,13 +495,10 @@ class IntensityMatrix:
         return tentative_baseline
 
     # calculates a least squars baseline based on a component array and its tentative baseline
-    def least_squares_baseline(self, component_array):
-        
-        # gets the tentative baseline for the component array
-        tentative_baselne = IntensityMatrix.tentative_baseline(component_array)
+    def least_squares_baseline(self, component_array, tentative_baseline):
 
         # recalculates abundances as height above tentative baseline
-        adjusted_abundances = component_array - tentative_baselne
+        adjusted_abundances = component_array - tentative_baseline
 
         # get the indicies for the smallest 50% of values in the array
         sorted_indices = np.argsort(adjusted_abundances)
@@ -508,9 +515,11 @@ class IntensityMatrix:
         
         return baseline
 
+    # endregion
+
     # calculates the sharpness for a single set of points
-    def calculate_sharpness(self, row, max_idx, end_idx):
+    def calculate_sharpness(self, row, start_idx, end_idx):
         
-        sharpness = (row[max_idx] - row[end_idx]) / (abs(max_idx - end_idx) * self.noise_factor * (row[max_idx]**0.5))
+        sharpness = (row[start_idx] - row[end_idx]) / (abs(start_idx - end_idx) * self.noise_factor * (row[start_idx]**0.5))
 
         return sharpness

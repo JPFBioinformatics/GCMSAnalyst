@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import find_peaks
 
+# region Functions
+
 # calculates the noise factor for a given chromatogram
 def calculate_noise_factor(array):
     
@@ -116,13 +118,13 @@ def least_squares_baseline(left_bound,right_bound,array, ten_baseline):
 def find_maxima(array):
 
     # Excludes the first and last 12 points from the search to prevent bounding errors
-    range = array[12:-12]
+    # range = array[12:-12]
 
     # finds the local maxima of the given array, stores their index
-    max_idxs, _ = find_peaks(range, height = 500)
+    max_idxs, _ = find_peaks(array, height = 500)
 
     # Shifts indices found in the range for use in the original array
-    max_idxs += 12
+    # max_idxs += 12
         
     # list to hold dictionary entries containing left_bound, right_bound and center for each maxima
     maxima = []
@@ -163,7 +165,7 @@ def find_bound(array, center, step):
             min_value = array[center+counter]
 
         # if the value at this step is less than 5% of close window here
-        if array[center+counter] < 0.05*max_value:
+        if array[center+counter] < 0.01*max_value:
             return center+counter
             
         # if the value at this step is more than 5 nf greater than the minimum close the window at the previous step
@@ -180,8 +182,8 @@ def find_bound(array, center, step):
 def generate_synthetic_chromatogram(length=3600, num_peaks=1, noise_level=10, peak_center = None, peak_width = None, peak_height = None):
 
     # generat x values and empty y values array
-    x = np.linspace(50, length, length)
-    chromatogram = np.zeros_like(x)
+    x = np.arange(length)
+    chromatogram = np.zeros_like(x).astype(np.float64)
 
     # Generate random peaks
     for _ in range(num_peaks):
@@ -212,9 +214,13 @@ def generate_synthetic_chromatogram(length=3600, num_peaks=1, noise_level=10, pe
 
     return x, chromatogram
 
+# endregion
+
+# region Graphing
+
 # generate synthetic chromatograms
-x1, chromatogram_1 = generate_synthetic_chromatogram(peak_center=2000,peak_width=15,peak_height=7000)
-x2, chromatogram_2 = generate_synthetic_chromatogram(peak_center=2015,peak_width=5,peak_height=1000)
+x1, chromatogram_1 = generate_synthetic_chromatogram(peak_center=2000,peak_width=2,peak_height=8000)
+x2, chromatogram_2 = generate_synthetic_chromatogram(peak_center=2006,peak_width=2,peak_height=6000)
 
 # add chromatograms together to simulate convolution
 combined_chromatogram = chromatogram_1 + chromatogram_2
@@ -222,31 +228,46 @@ combined_chromatogram = chromatogram_1 + chromatogram_2
 # finds maxima and bounds for component array for chromatogram 1 and 2
 c1_maxima = find_maxima(chromatogram_1)
 c2_maxima = find_maxima(chromatogram_2)
-
-print("chromatogram 1 bounds")
-for key, value in c1_maxima[0].items():
-    print(f"{key}: {value}")
-print("chromatogram 2 bounds")
-for key, value in c2_maxima[0].items():
-    print(f"{key}: {value}")
-
+conv_maxima = find_maxima(combined_chromatogram)
 
 # calculate x values for compponent arrays used in graphing baselines
 c1_x = np.arange(c1_maxima[0]['left_bound'], c1_maxima[0]['right_bound']+1)
 c2_x = np.arange(c2_maxima[0]['left_bound'], c2_maxima[0]['right_bound']+1)
+conv_x1 = np.arange(conv_maxima[0]['left_bound'],conv_maxima[0]['right_bound']+1)
+conv_x2 = np.arange(conv_maxima[1]['left_bound'],conv_maxima[1]['right_bound']+1)
 
 # calculate tentative baseline for chromatogram 1 and 2
 tent_c1 = tentative_baseline(c1_maxima[0]['left_bound'], c1_maxima[0]['right_bound'],chromatogram_1)
 tent_c2 = tentative_baseline(c2_maxima[0]['left_bound'], c2_maxima[0]['right_bound'],chromatogram_2)
+tent_conv1 = tentative_baseline(conv_maxima[0]['left_bound'],conv_maxima[0]['right_bound'],combined_chromatogram)
+tent_conv2 = tentative_baseline(conv_maxima[1]['left_bound'],conv_maxima[1]['right_bound'],combined_chromatogram)
 
 # calculate least squares baseline for chromatogram 1 and 2
 lsb_c1 = least_squares_baseline(c1_maxima[0]['left_bound'], c1_maxima[0]['right_bound'],chromatogram_1,tent_c1)
 lsb_c2 = least_squares_baseline(c2_maxima[0]['left_bound'], c2_maxima[0]['right_bound'],chromatogram_2,tent_c2)
+lsb_conv1 = least_squares_baseline(conv_maxima[0]['left_bound'],conv_maxima[0]['right_bound'],combined_chromatogram,tent_conv1)
+lsb_conv2 = least_squares_baseline(conv_maxima[1]['left_bound'],conv_maxima[1]['right_bound'],combined_chromatogram,tent_conv2)
+
+bl_center = (conv_maxima[0]['center'] - conv_maxima[0]['left_bound'])
+peak1_height = combined_chromatogram[conv_maxima[0]['center']] - lsb_conv1[bl_center]
+print(f"Calculated height of peak: {peak1_height}")
+print(f"True height of peak: {chromatogram_1[c1_maxima[0]['center']]}")
+print(f"Height of convoluted peak: {combined_chromatogram[c1_maxima[0]['center']]}")
 
 # Plot
 fig,ax = plt.subplots(nrows = 3, ncols = 1, figsize = (10,10), sharex = True, sharey = True)
-
 ax[0].plot(x1, combined_chromatogram, label="Convoluted Chromatogram", color = 'blue', alpha = 0.5)
+ax[0].plot(conv_x1, tent_conv1, label='Tentative baseline', color = 'grey', alpha = 0.5)
+ax[0].plot(conv_x1, lsb_conv1, label='Least Squares baseline', color = 'purple', alpha = 0.5)
+ax[0].plot(conv_x2, tent_conv2, color = 'grey', alpha = 0.5)
+ax[0].plot(conv_x2, lsb_conv2, color = 'purple', alpha = 0.5)
+ax[0].scatter(bl_center + conv_maxima[0]['left_bound'], 0, color = 'pink')
+ax[0].scatter(conv_maxima[0]['left_bound'], combined_chromatogram[conv_maxima[0]['left_bound']], color = 'green')
+ax[0].scatter(conv_maxima[0]['right_bound'], combined_chromatogram[conv_maxima[0]['right_bound']], color = 'orange')
+ax[0].scatter(conv_maxima[0]['center'], combined_chromatogram[conv_maxima[0]['center']], color = 'black')
+ax[0].scatter(conv_maxima[1]['left_bound'], combined_chromatogram[conv_maxima[1]['left_bound']], color = 'green')
+ax[0].scatter(conv_maxima[1]['right_bound'], combined_chromatogram[conv_maxima[1]['right_bound']], color = 'orange')
+ax[0].scatter(conv_maxima[1]['center'], combined_chromatogram[conv_maxima[1]['center']], color = 'black')
 ax[0].set_xlabel('Time')
 ax[0].set_ylabel('Intensity')
 ax[0].legend()
@@ -273,3 +294,5 @@ ax[2].set_ylabel('Intensity')
 ax[2].legend()
 
 plt.show()
+
+# endregion

@@ -1,12 +1,10 @@
-"""Converts an Agilant .d file to an mzML (xml based) and then extracts the data from the xml into an IntensityArray"""
-
 import subprocess
 from pathlib import Path
 import numpy as np
 import xml.etree.ElementTree as ET
 import base64
 import zlib
-from src.intensity_matrix import IntensityMatrix
+from intensity_matrix import IntensityMatrix
 
 class MzMLProcessor:
 
@@ -58,11 +56,12 @@ class MzMLProcessor:
 
     """Decodes base64, decompresses zlib, and converts to a NumPy array with an associated m/z and time lists."""
     @staticmethod
-    def decode_binary_data(encoded_data):
+    def decode_binary_data(encoded_data, dtype):
 
         decoded = base64.b64decode(encoded_data)
         decompressed = zlib.decompress(decoded)
-        return np.frombuffer(decompressed, dtype=np.float64)
+
+        return np.frombuffer(decompressed, dtype=dtype)
 
     """Binns masses -0.3 to +0.7 of integer values"""
     @staticmethod
@@ -163,8 +162,8 @@ class MzMLProcessor:
             mz_array_encoded = binary_data_elements[0].text
             intensity_array_encoded = binary_data_elements[1].text
 
-            mz_array = MzMLProcessor.decode_binary_data(mz_array_encoded)
-            intensity_array = MzMLProcessor.decode_binary_data(intensity_array_encoded)
+            mz_array = MzMLProcessor.decode_binary_data(mz_array_encoded, dtype=np.float64)
+            intensity_array = MzMLProcessor.decode_binary_data(intensity_array_encoded, dtype=np.float32)
 
             # Create a dictionary for each spectrum (m/z -> intensity)
             spectrum_intensity_dict = dict(zip(mz_array, intensity_array))
