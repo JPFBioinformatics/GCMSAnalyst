@@ -16,19 +16,24 @@ mzml_data = root_dir / 'example_data' / 'SC1_TMS.mzML'
 # create an intensity matrix from the given mzML file
 int_matrix = MzMLProcessor.create_intensity_matrix(mzml_data)
 
+print(f"intensity matrix dimensions: {int_matrix.intensity_matrix.shape}")
+print(f"Noise Factor: {int_matrix.noise_factor}")
+
 # endregion
 
-# region Extract data from the IntensityMatrix object
+# region Extract data from the IntensityMatrix object for graphing
 
 # Scan numbers
 scan_no = np.array([entry['scan_id'] for entry in int_matrix.spectra_metadata], dtype = int)
+# make the first scan_no 0 so it aligns with index values for peak finding
+scan_no -= 1
 
 # Time
 time = np.array([entry['scan_start_time'] for entry in int_matrix.spectra_metadata], dtype = float)
 print(f"Number of time points sampled: {len(time)}")
 
 # Total ion current
-tic = np.array([entry['total_ion_current'] for entry in int_matrix.spectra_metadata], dtype = float)
+tic = np.array(int_matrix.intensity_matrix[-1], dtype = float)
 
 # Intensity matrix
 intensity_matrix = int_matrix.intensity_matrix
@@ -39,9 +44,8 @@ print(f"Number of unique m/z values: {len(mz_list)}")
 
 # endregion
 
-# region Determine the time accounted for in each scan, average: 0.1052 sec/scan +/- 7.815e-6 (0.074%)
-
-spectra_width = []
+# region Determine the time accounted for in each scan, average: 0.1052 sec/scan +/- 7.815e-6 (0.074%) for SC1_TMS
+"""spectra_width = []
 for i in range(1,len(time)-1):
     duration = float(time[i]) - float(time[i-1])
     spectra_width.append(duration)
@@ -51,19 +55,23 @@ avg_deviation = np.std(spectra_width)
 
 print(f"Average duration of each scan: {avg_time}")
 print(f"Standard deviation of average deviation: {avg_deviation}")
-print(f"Percent deviation {round(avg_deviation*100/avg_time,3)}%")
-
+print(f"Percent deviation: {round(avg_deviation*100/avg_time,3)}%")
+"""
 # endregion
 
 # region Determining the maxima and endpoints of peaks in the distribution
 
-# create list of dict entries maxima that contain index values for left, right, and center of each detected peak
-maxima = IntensityMatrix.find_maxima(intensity_matrix)
+# identify all peaks in matrix
+maxima = int_matrix.identify_peaks(intensity_matrix)
+
+# grab the last row of maxima, corrospoinding to a list of dict entries for the peaks of the tic
+tic_peaks = maxima[-1]
 
 # put values in their own lists for graphing
-left_bounds = [entry['left_bound'] for entry in maxima]
-right_bounds = [entry['right_bound'] for entry in maxima]
-centers = [entry['center'] for entry in maxima]
+left_bounds = [entry['left_bound'] for entry in tic_peaks]
+right_bounds = [entry['right_bound'] for entry in tic_peaks]
+centers = [entry['center'] for entry in tic_peaks]
+print(f"Number of peaks identified in TIC: {len(tic_peaks)}")
 
 # endregion
 
@@ -84,4 +92,4 @@ plt.ylabel("Intensity")
 
 plt.show()
 
-# endregion
+# endregion"

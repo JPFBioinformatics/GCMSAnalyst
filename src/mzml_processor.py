@@ -139,11 +139,6 @@ class MzMLProcessor:
                     if scan_start_time is not None:
                         scan_start_time = scan_start_time.get('value')
 
-            total_ion_current = None
-            tic_param = spectrum.find(".//cvParam[@name='total ion current']", namespaces)
-            if tic_param is not None:
-                total_ion_current = tic_param.get('value')
-
             binary_data_elements = spectrum.findall('./binaryDataArrayList/binaryDataArray/binary', namespaces)
 
             if len(binary_data_elements) < 2:
@@ -154,7 +149,6 @@ class MzMLProcessor:
             metadata = {
                 'scan_id': scan_id,
                 'scan_start_time': scan_start_time,
-                'total_ion_current': total_ion_current
             }
             spectra_metadata.append(metadata)
 
@@ -193,7 +187,24 @@ class MzMLProcessor:
         # bin the intensity matrix and unique_mzs
         binned_mzs, binned_matrix = MzMLProcessor.bin_masses(unique_mzs, intensity_matrix)
 
-        return IntensityMatrix(binned_matrix, binned_mzs, spectra_metadata)
+        # add TIC row to end of matrix
+        sum_row = np.sum(binned_matrix, axis=0)
+        final_matrix = np.vstack((binned_matrix,sum_row))
 
-    
+        # add 9999 value to end of binned_mzs to represent the TIC
+        binned_mzs.append(9999)
+
+        # create intensity matrix object
+        output_matrix = IntensityMatrix(final_matrix,binned_mzs,spectra_metadata)
+
+        # calculate the abundance thereshold
+        output_matrix.calculate_threshold()
+
+        # replace any values at or below abundance_threshold with corrosponding abundance threshold value
+        output_matrix.apply_threshold()
+
+        # calculate the noise factor
+        output_matrix.calculate_noise_factor()
+
+        return output_matrix
         

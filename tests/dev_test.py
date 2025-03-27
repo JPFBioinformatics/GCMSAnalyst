@@ -1,185 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.signal import find_peaks
-
-# region Functions
-
-# calculates the noise factor for a given chromatogram
-def calculate_noise_factor(array):
-    
-    # split array into 13 scan segments excluding the last segment if it has < 13 elements for simplicity
-    num_segments = len(array) // 13
-
-    # create a list to hold the segment sub-arrays
-    segments = []
-
-    # loop num_segments times to create subarrays
-    for i in range(num_segments):
-        start = i*13
-        end = (i+1)*13
-        segment = array[start:end]
-
-        # calculate the average for the segment
-        avg = np.mean(segment)
-
-        # appends segment only if it "crosses" the average > 6 times
-        if count_crossings(segment,avg) > 6:
-            segments.append(segment) 
-
-    # list to hold calculated noise factors for calculated segments
-    noise_factors = []
-
-    # iterates over each segment and calculates the noise factor
-    for segment in segments:
-
-        # calculates noise factor
-        nf = calculate_row_nf(segment)
-
-        # appends noise factor to the master list
-        noise_factors.append(nf)
-
-    return np.median(noise_factors)
-
-# calculates and returns the median deviation for a given 1D array
-def calculate_row_nf(row):
-
-    # calculate the mean of the row
-    mean = np.mean(row)
-    sqrt_of_mean = mean ** 0.5
-
-    # calculate deviation from the mean for all members of row
-    deviations = np.abs(row-mean)
-
-    # return the median of the deviations / sqrt of the mean (Nf for that row)
-    return np.median(deviations)/sqrt_of_mean
-
-# counts the number of times an array "crosses" a given average value
-def count_crossings(row,avg):
-    crossings = 0
-    for i in range(len(row)-1):
-        if (row[i] < avg and row[i+1] > avg) or (row[i] > avg and row[i+1] < avg):
-            crossings += 1
-    return crossings
-
-# calculates a tentative baseline for a percieved component
-def tentative_baseline(left_bound,right_bound,array):
-
-    # create componenet array 
-    component_array = array[left_bound:right_bound+1]
-
-    # creates an x-values array to use later for baseline computing, each x value is just an index value for input array
-    x = np.arange(len(component_array))
-
-    # get the index of the peak maximum
-    max_idx = np.argmax(component_array)
-
-    # get the index values of the minimum on the left and on the right of the max
-    left_idx = np.argmin(component_array[:max_idx])
-    right_idx = np.argmin(component_array[max_idx:]) + max_idx
-
-    # get the intensity values associated with both these minimums
-    left_val = component_array[left_idx]
-    right_val = component_array[right_idx]
-
-    # get linear baseline variables
-    m = (right_val - left_val) / (right_idx - left_idx) 
-    b = left_val - m * left_idx
-
-    # generate tentative baseline array
-    tentative_baseline = m * x + b
-
-    return tentative_baseline
-
-# calculates a least squars baseline based on a component array and its tentative baseline
-def least_squares_baseline(left_bound,right_bound,array, ten_baseline):
-        
-    # create componenet array 
-    component_array = array[left_bound:right_bound+1]
-
-    # recalculates abundances as height above tentative baseline
-    adjusted_abundances = component_array - ten_baseline
-
-    # get the indicies for the smallest 50% of values in the array
-    sorted_indices = np.argsort(adjusted_abundances)
-    smallest_indices = sorted_indices[:len(component_array)//2]
-
-    # get y values (abundances) for least squares baseline estimation
-    smallest_abundances = component_array[smallest_indices]
-        
-    # linear least squares fitting 
-    m, b = np.polyfit(smallest_indices, smallest_abundances, 1)
-
-    # generate a bseline for the entire compoonent array
-    baseline = m * np.arange(len(component_array)) + b
-        
-    return baseline
-
-# finds local maxima for a given 1D array
-def find_maxima(array):
-
-    # Excludes the first and last 12 points from the search to prevent bounding errors
-    range = array[12:-12]
-
-    # finds the local maxima of the given array, stores their index
-    max_idxs, _ = find_peaks(range, height = 500)
-
-    # Shifts indices found in the range for use in the original array
-    max_idxs += 12
-        
-    # list to hold dictionary entries containing left_bound, right_bound and center for each maxima
-    maxima = []
-
-    # go through each maxima in list, find its deconvolution window and check if sinal is high enough to be included
-    for max in max_idxs:
-
-        # find the left bound of the deconvolution window
-        left_bound = find_bound(array,max,-1)
-
-        # find the right bound of the deconvolution window
-        right_bound = find_bound(array,max,1)
-
-        max_bounds = {
-            'left_bound' : left_bound,
-            'right_bound' : right_bound,
-            'center' : max
-        }
-
-        maxima.append(max_bounds)
-
-    # returns list of dictionary entries containing left bound, right bound, and center for each max (index values)
-    return maxima
-
-# finds the left or right deconvolution bound for a given maxima, step = 1 for right bound step = -1 for left bound
-def find_bound(array, center, step):
-
-    nf = calculate_noise_factor(array)
-    counter = 1 * step
-    min_value = array[center]
-    max_value = array[center]
-
-    # iterate up to 12 setps in given direction from center
-    while counter <= 12 and counter >= -12:
-            
-        # if the value at this step is less than the current min, set the min to this value
-        if array[center+counter] < min_value:
-            min_value = array[center+counter]
-
-        # if the value at this step is less than 5% of close window here
-        if array[center+counter] < 0.01*max_value:
-            return center+counter
-            
-        # if the value at this step is more than 5 nf greater than the minimum close the window at the previous step
-        if array[center+counter] > 5*nf+min_value:
-            return center+counter-step
-            
-        # increment counter
-        counter += step
-
-    # if no previous checks returned a value close window at 12 steps from the max
-    return center+step*12
+from intensity_matrix import IntensityMatrix
 
 # generates a synthetic chromatogram for testing
-def generate_synthetic_chromatogram(length=3600, num_peaks=1, noise_level=10, peak_center = None, peak_width = None, peak_height = None):
+def generate_synthetic_chromatogram(length=3600, num_peaks=1, noise_level=250, peak_center = None, peak_width = None, peak_height = None):
 
     # generat x values and empty y values array
     x = np.arange(length)
@@ -212,83 +36,139 @@ def generate_synthetic_chromatogram(length=3600, num_peaks=1, noise_level=10, pe
     if min_value > 0:
         chromatogram = chromatogram + 25
 
-    return x, chromatogram
+    return x, chromatogram.reshape(1,-1)
 
 # endregion
 
 # region Graphing
 
 # generate synthetic chromatograms
-x1, chromatogram_1 = generate_synthetic_chromatogram(peak_center=2000,peak_width=2,peak_height=8000)
-x2, chromatogram_2 = generate_synthetic_chromatogram(peak_center=2006,peak_width=2,peak_height=6000)
-
-# add chromatograms together to simulate convolution
+x1, chromatogram_1 = generate_synthetic_chromatogram(peak_center=2000,peak_width=2,peak_height=50000)
+x2, chromatogram_2 = generate_synthetic_chromatogram(peak_center=2006,peak_width=2,peak_height=40000)
 combined_chromatogram = chromatogram_1 + chromatogram_2
 
+# generate IntensityMatrix objects for each chromatogram
+chrom1 = IntensityMatrix(chromatogram_1,[9999])
+chrom2 = IntensityMatrix(chromatogram_2,[9999])
+c_chrom = IntensityMatrix(combined_chromatogram,[9999])
+print(f"chrom1 shape: {chrom1.intensity_matrix.shape}")
+print(f"chrom2 shape: {chrom2.intensity_matrix.shape}")
+print(f"c_chrom shape: {c_chrom.intensity_matrix.shape}")
+
+# generate noise factors and abundance thresholds for chromatograms
+chrom1.calculate_noise_factor()
+chrom2.calculate_noise_factor()
+c_chrom.calculate_noise_factor()
+print(f"Chrom 1 Nf: {chrom1.noise_factor}")
+print(f"Chrom 2 Nf: {chrom2.noise_factor}")
+print(f"Convoluted chrom Nf: {c_chrom.noise_factor}")
+
 # finds maxima and bounds for component array for chromatogram 1 and 2
-c1_maxima = find_maxima(chromatogram_1)
-c2_maxima = find_maxima(chromatogram_2)
-conv_maxima = find_maxima(combined_chromatogram)
+c1_maxima = chrom1.identify_peaks(chrom1.intensity_matrix)
+c2_maxima = chrom2.identify_peaks(chrom2.intensity_matrix)
+conv_maxima = c_chrom.identify_peaks(c_chrom.intensity_matrix)
+print("")
+print("Maxima info:")
+print(c1_maxima)
+print(c2_maxima)
+print(conv_maxima)
+print("")
 
 # calculate x values for compponent arrays used in graphing baselines
-c1_x = np.arange(c1_maxima[0]['left_bound'], c1_maxima[0]['right_bound']+1)
-c2_x = np.arange(c2_maxima[0]['left_bound'], c2_maxima[0]['right_bound']+1)
-conv_x1 = np.arange(conv_maxima[0]['left_bound'],conv_maxima[0]['right_bound']+1)
-conv_x2 = np.arange(conv_maxima[1]['left_bound'],conv_maxima[1]['right_bound']+1)
+c1_x = np.arange(c1_maxima[0][0]['left_bound'], c1_maxima[0][0]['right_bound']+1)
+c2_x = np.arange(c2_maxima[0][0]['left_bound'], c2_maxima[0][0]['right_bound']+1)
+conv_x1 = np.arange(conv_maxima[0][0]['left_bound'],conv_maxima[0][0]['right_bound']+1)
+conv_x2 = np.arange(conv_maxima[0][1]['left_bound'],conv_maxima[0][1]['right_bound']+1)
 
 # calculate tentative baseline for chromatogram 1 and 2
-tent_c1 = tentative_baseline(c1_maxima[0]['left_bound'], c1_maxima[0]['right_bound'],chromatogram_1)
-tent_c2 = tentative_baseline(c2_maxima[0]['left_bound'], c2_maxima[0]['right_bound'],chromatogram_2)
-tent_conv1 = tentative_baseline(conv_maxima[0]['left_bound'],conv_maxima[0]['right_bound'],combined_chromatogram)
-tent_conv2 = tentative_baseline(conv_maxima[1]['left_bound'],conv_maxima[1]['right_bound'],combined_chromatogram)
+tent_c1 = chrom1.tentative_baseline(c1_maxima[0][0]['left_bound'], c1_maxima[0][0]['right_bound'],chrom1.intensity_matrix[0])
+tent_c2 = chrom2.tentative_baseline(c2_maxima[0][0]['left_bound'], c2_maxima[0][0]['right_bound'],chrom2.intensity_matrix[0])
+tent_conv1 = c_chrom.tentative_baseline(conv_maxima[0][0]['left_bound'],conv_maxima[0][0]['right_bound'],c_chrom.intensity_matrix[0])
+tent_conv2 = c_chrom.tentative_baseline(conv_maxima[0][1]['left_bound'],conv_maxima[0][1]['right_bound'],c_chrom.intensity_matrix[0])
 
 # calculate least squares baseline for chromatogram 1 and 2
-lsb_c1 = least_squares_baseline(c1_maxima[0]['left_bound'], c1_maxima[0]['right_bound'],chromatogram_1,tent_c1)
-lsb_c2 = least_squares_baseline(c2_maxima[0]['left_bound'], c2_maxima[0]['right_bound'],chromatogram_2,tent_c2)
-lsb_conv1 = least_squares_baseline(conv_maxima[0]['left_bound'],conv_maxima[0]['right_bound'],combined_chromatogram,tent_conv1)
-lsb_conv2 = least_squares_baseline(conv_maxima[1]['left_bound'],conv_maxima[1]['right_bound'],combined_chromatogram,tent_conv2)
+lsb_c1 = chrom1.least_squares_baseline(c1_maxima[0][0]['left_bound'], c1_maxima[0][0]['right_bound'],chrom1.intensity_matrix[0],tent_c1)
+lsb_c2 = chrom2.least_squares_baseline(c2_maxima[0][0]['left_bound'], c2_maxima[0][0]['right_bound'],chrom2.intensity_matrix[0],tent_c2)
+lsb_conv1 = c_chrom.least_squares_baseline(conv_maxima[0][0]['left_bound'],conv_maxima[0][0]['right_bound'],c_chrom.intensity_matrix[0],tent_conv1)
+lsb_conv2 = c_chrom.least_squares_baseline(conv_maxima[0][1]['left_bound'],conv_maxima[0][1]['right_bound'],c_chrom.intensity_matrix[0],tent_conv2)
 
-bl_center = (conv_maxima[0]['center'] - conv_maxima[0]['left_bound'])
-peak1_height = combined_chromatogram[conv_maxima[0]['center']] - lsb_conv1[bl_center]
+bl_center = (conv_maxima[0][0]['center'] - conv_maxima[0][0]['left_bound'])
+peak1_height = c_chrom.intensity_matrix[0][conv_maxima[0][0]['center']] - lsb_conv1['baseline_array'][bl_center]
 print(f"Calculated height of peak: {peak1_height}")
-print(f"True height of peak: {chromatogram_1[c1_maxima[0]['center']]}")
-print(f"Height of convoluted peak: {combined_chromatogram[c1_maxima[0]['center']]}")
+print(f"True height of peak: {chrom1.intensity_matrix[0][c1_maxima[0][0]['center']]}")
+print(f"Height of convoluted peak: {c_chrom.intensity_matrix[0][c1_maxima[0][0]['center']]}")
+
+# calculate the height of each chromatogram and plot it as a green vertical line
+chrom1_height = c1_maxima[0][0]['precise_max_height']
+chrom1_location = c1_maxima[0][0]['precise_max_location']
+chrom1_precise_max_baseline = lsb_c1['slope']*(chrom1_location-lsb_c1['left_bound'])+lsb_c1['y_int']
+chrom1_precise_max_top = chrom1_precise_max_baseline + chrom1_height
+print("Chromatogram 1 height information:")
+print(f"Location: {chrom1_location}")
+print(f"Height: {chrom1_height}")
+print(f"Bottom of height line: {chrom1_precise_max_baseline}")
+print(f"Top of height line: {chrom1_precise_max_top}")
+
+chrom2_height = c2_maxima[0][0]['precise_max_height']
+chrom2_location = c2_maxima[0][0]['precise_max_location']
+chrom2_precise_max_baseline = lsb_c2['slope']*(chrom2_location-lsb_c2['left_bound'])+lsb_c2['y_int']
+chrom2_precise_max_top = chrom2_precise_max_baseline + chrom2_height
+print("Chromatogram 2 height information:")
+print(f"Location: {chrom2_location}")
+print(f"Height: {chrom2_height}")
+print(f"Bottom of height line: {chrom2_precise_max_baseline}")
+print(f"Top of height line: {chrom2_precise_max_top}")
+
+conv1_height = conv_maxima[0][0]['precise_max_height']
+conv1_location = conv_maxima[0][0]['precise_max_location']
+conv1_precise_max_baseline = lsb_conv1['slope']*(conv1_location-lsb_conv1['left_bound'])+lsb_conv1['y_int']
+conv1_precise_max_top = conv1_precise_max_baseline + conv1_height
+
+conv2_height = conv_maxima[0][1]['precise_max_height']
+conv2_location = conv_maxima[0][1]['precise_max_location']
+conv2_precise_max_baseline = lsb_conv2['slope']*(conv2_location-lsb_conv2['left_bound'])+lsb_conv2['y_int']
+conv2_precise_max_top = conv2_precise_max_baseline + conv2_height
+
 
 # Plot
 fig,ax = plt.subplots(nrows = 3, ncols = 1, figsize = (10,10), sharex = True, sharey = True)
-ax[0].plot(x1, combined_chromatogram, label="Convoluted Chromatogram", color = 'blue', alpha = 0.5)
+
+ax[0].plot(x1, c_chrom.intensity_matrix[0], label="Convoluted Chromatogram", color = 'blue', alpha = 0.5)
 ax[0].plot(conv_x1, tent_conv1, label='Tentative baseline', color = 'grey', alpha = 0.5)
-ax[0].plot(conv_x1, lsb_conv1, label='Least Squares baseline', color = 'purple', alpha = 0.5)
+ax[0].plot(conv_x1, lsb_conv1['baseline_array'], label='Least Squares baseline', color = 'purple', alpha = 0.5)
+ax[0].vlines(conv1_location,conv1_precise_max_baseline,conv1_precise_max_top,linestyles ='dashed',color = 'black')
+ax[0].vlines(conv2_location,conv2_precise_max_baseline,conv2_precise_max_top,linestyles ='dashed',color = 'black')
 ax[0].plot(conv_x2, tent_conv2, color = 'grey', alpha = 0.5)
-ax[0].plot(conv_x2, lsb_conv2, color = 'purple', alpha = 0.5)
-ax[0].scatter(bl_center + conv_maxima[0]['left_bound'], 0, color = 'pink')
-ax[0].scatter(conv_maxima[0]['left_bound'], combined_chromatogram[conv_maxima[0]['left_bound']], color = 'green')
-ax[0].scatter(conv_maxima[0]['right_bound'], combined_chromatogram[conv_maxima[0]['right_bound']], color = 'orange')
-ax[0].scatter(conv_maxima[0]['center'], combined_chromatogram[conv_maxima[0]['center']], color = 'black')
-ax[0].scatter(conv_maxima[1]['left_bound'], combined_chromatogram[conv_maxima[1]['left_bound']], color = 'green')
-ax[0].scatter(conv_maxima[1]['right_bound'], combined_chromatogram[conv_maxima[1]['right_bound']], color = 'orange')
-ax[0].scatter(conv_maxima[1]['center'], combined_chromatogram[conv_maxima[1]['center']], color = 'black')
+ax[0].plot(conv_x2, lsb_conv2['baseline_array'], color = 'purple', alpha = 0.5)
+ax[0].scatter(conv_maxima[0][0]['left_bound'], c_chrom.intensity_matrix[0][conv_maxima[0][0]['left_bound']], color = 'orange')
+ax[0].scatter(conv_maxima[0][0]['right_bound'], c_chrom.intensity_matrix[0][conv_maxima[0][0]['right_bound']], color = 'orange')
+ax[0].scatter(conv_maxima[0][0]['center'], c_chrom.intensity_matrix[0][conv_maxima[0][0]['center']], color = 'black')
+ax[0].scatter(conv_maxima[0][1]['left_bound'], c_chrom.intensity_matrix[0][conv_maxima[0][1]['left_bound']], color = 'orange')
+ax[0].scatter(conv_maxima[0][1]['right_bound'], c_chrom.intensity_matrix[0][conv_maxima[0][1]['right_bound']], color = 'orange')
+ax[0].scatter(conv_maxima[0][1]['center'], c_chrom.intensity_matrix[0][conv_maxima[0][1]['center']], color = 'black')
 ax[0].set_xlabel('Time')
 ax[0].set_ylabel('Intensity')
 ax[0].legend()
 
 
-ax[1].plot(x1, chromatogram_1, label="chromatogram 1", color = 'red', alpha = 0.5)
+ax[1].plot(x1, chrom1.intensity_matrix[0], label="chromatogram 1", color = 'red', alpha = 0.5)
 ax[1].plot(c1_x, tent_c1, label='Tentative baseline', color = 'grey', alpha = 0.5)
-ax[1].plot(c1_x, lsb_c1, label='Least Squares baseline', color = 'purple', alpha = 0.5)
-ax[1].scatter(c1_maxima[0]['left_bound'], chromatogram_1[c1_maxima[0]['left_bound']], color = 'black')
-ax[1].scatter(c1_maxima[0]['right_bound'], chromatogram_1[c1_maxima[0]['right_bound']], color = 'black')
-ax[1].scatter(c1_maxima[0]['center'], chromatogram_1[c1_maxima[0]['center']], color = 'black')
+ax[1].plot(c1_x, lsb_c1['baseline_array'], label='Least Squares baseline', color = 'purple', alpha = 0.5)
+ax[1].vlines(chrom1_location,chrom1_precise_max_baseline,chrom1_precise_max_top,linestyles ='dashed',color = 'black')
+ax[1].scatter(c1_maxima[0][0]['left_bound'], chrom1.intensity_matrix[0][c1_maxima[0][0]['left_bound']], color = 'orange')
+ax[1].scatter(c1_maxima[0][0]['right_bound'], chrom1.intensity_matrix[0][c1_maxima[0][0]['right_bound']], color = 'orange')
+ax[1].scatter(c1_maxima[0][0]['center'], chrom1.intensity_matrix[0][c1_maxima[0][0]['center']], color = 'black')
 ax[1].set_xlabel('Time')
 ax[1].set_ylabel('Intensity')
 ax[1].legend()
 
-ax[2].plot(x2, chromatogram_2, label="chromatogram 2", color = 'green', alpha = 0.5)
+ax[2].plot(x2, chrom2.intensity_matrix[0], label="chromatogram 2", color = 'green', alpha = 0.5)
 ax[2].plot(c2_x, tent_c2, label='Tentative baseline', color = 'grey', alpha = 0.5)
-ax[2].plot(c2_x, lsb_c2, label='Least Squares baseline', color = 'purple', alpha = 0.5)
-ax[2].scatter(c2_maxima[0]['left_bound'], chromatogram_2[c2_maxima[0]['left_bound']], color = 'black')
-ax[2].scatter(c2_maxima[0]['right_bound'], chromatogram_2[c2_maxima[0]['right_bound']], color = 'black')
-ax[2].scatter(c2_maxima[0]['center'], chromatogram_2[c2_maxima[0]['center']], color = 'black')
+ax[2].plot(c2_x, lsb_c2['baseline_array'], label='Least Squares baseline', color = 'purple', alpha = 0.5)
+ax[2].vlines(chrom2_location,chrom2_precise_max_baseline,chrom2_precise_max_top,linestyles ='dashed',color = 'black')
+ax[2].scatter(c2_maxima[0][0]['left_bound'], chrom2.intensity_matrix[0][c2_maxima[0][0]['left_bound']], color = 'orange')
+ax[2].scatter(c2_maxima[0][0]['right_bound'], chrom2.intensity_matrix[0][c2_maxima[0][0]['right_bound']], color = 'orange')
+ax[2].scatter(c2_maxima[0][0]['center'], chrom2.intensity_matrix[0][c2_maxima[0][0]['center']], color = 'black')
 ax[2].set_xlabel('Time')
 ax[2].set_ylabel('Intensity')
 ax[2].legend()

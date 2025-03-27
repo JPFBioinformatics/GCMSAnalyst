@@ -5,12 +5,13 @@ from scipy.signal import savgol_filter, find_peaks
 # Class for storage and cleaning of intensity matrix extracted by mzml_processor
 class IntensityMatrix:
 
-    def __init__(self, intensity_matrix, unique_mzs, spectra_metadata):
+    def __init__(self, intensity_matrix, unique_mzs, spectra_metadata = None):
         self.intensity_matrix = intensity_matrix
         self.unique_mzs = unique_mzs
         self.spectra_metadata = spectra_metadata
         self.noise_factor = None
         self.abundance_threshold = None
+        self.peak_list = None
 
     #region Getter/Setters
     @property
@@ -31,7 +32,7 @@ class IntensityMatrix:
     @unique_mzs.setter
     def unique_mzs(self,value):
         if not len(value) == self.intensity_matrix.shape[0]:
-            raise ValueError('unique m/z length does not match intensity array row count')
+            raise ValueError(f"unique m/z length {len(value)} does not match intensity array row count {self.intensity_matrix.shape[0]}")
         if not isinstance(value, list):
             raise ValueError('unique m/z is not a list')
         else:
@@ -43,12 +44,12 @@ class IntensityMatrix:
 
     @spectra_metadata.setter
     def spectra_metadata(self,value):
-        if not len(value) == self.intensity_matrix.shape[1]:
-            raise ValueError('Spectra metadata length does not match intensity array column count')
-        if not isinstance(value, list):
-            raise ValueError('Spectra metadata is not a list')
-        else:
-            self._spectra_metadata = value
+        if value is not None:
+            if not len(value) == self.intensity_matrix.shape[1]:
+                raise ValueError('Spectra metadata length does not match intensity array column count')
+            if not isinstance(value, list):
+                raise ValueError('Spectra metadata is not a list')
+        self._spectra_metadata = value
     #endregion
 
     # region OG Baseline, probably gonna delete
@@ -207,8 +208,10 @@ class IntensityMatrix:
 
     # endregion
 
+    # region Abundance Threshold
+
     # calculates At value to replace 0 values with
-    def calculate_threshold(self, intensity_matrix):
+    def calculate_threshold(self):
 
         """
         Counts the number of zero to nonzero transtions for each m/z in 10 approximately equally sized time segments then takes the square root
@@ -222,6 +225,8 @@ class IntensityMatrix:
                                            each entry corrosponds to the calculated threshold value for that m/z in that segment
         """
 
+        intensity_matrix = self.intensity_matrix
+
         # the minimum measured abundance in the intensity matrix
         min_value = np.min(intensity_matrix[intensity_matrix>0])
 
@@ -231,10 +236,16 @@ class IntensityMatrix:
         # split the array into 10 approximately equal time segments
         segments = np.array_split(intensity_matrix, 10, axis=1)
 
-        # for each segment count the number of ties a 0 value is followed by a nonzero value and store in transitions array
+        # counter for the start index of each segment
+        start_idx = 0
+
+        # list to hold the start index of each segment
+        segment_starts = []
+
+        # for each segment count the number of times a 0 value is followed by a nonzero value and store in transitions array
         for seg_idx,segment in enumerate(segments):
             for row_idx, row in enumerate(segment):
-                transitions = (row[:-1] == 0 & row[1:] > 0)
+                transitions = ((row[:-1] == 0) & (row[1:] > 0))
                 # number of 0 to nonzero transitions in row
                 num_transitions = np.sum(transitions)
                 # length of the segment
@@ -242,22 +253,59 @@ class IntensityMatrix:
                 # fraction of all scans in segment that are involved in m/z transtion
                 threshold_values[row_idx, seg_idx] = num_transitions / segment_length
 
-        # takes the squar root of all transition fraction values
+            # adds the start index for this segment to segment_starts list
+            segment_starts.append(start_idx)
+            # increments start_idx so that it now holds the first index value of the next segment
+            start_idx += segment_length
+
+        # takes the square root of all transition fraction values
         threshold_values **= 0.5
 
-        # multiplies these square rooted values by the min value in matrix, resulting in At matrix
+        # multiplies these square rooted values by the min value in matrix
         threshold_values *= min_value
 
-        return threshold_values
+        # dictionary that holds the start index of each segment (list) and the 2D numpy array (10 col, len(unique_mzs) rows) with threshold values stored in each cell
+        threshold_dict = {
+            'start_idxs' : segment_starts,
+            'values' : threshold_values
+        }
+
+        self.abundance_threshold = threshold_dict
+
+        return "Threshold values calculated"
+
+    # takes any value in the array that is below At for that segment for that m/z value and 
+    def apply_threshold(self):
+        
+        # iterate over each row, segment
+        for row_idx,row in enumerate(self.intensity_matrix):
+            for seg_idx in range(10):
+                
+                # start index for this segment
+                start = self.abundance_threshold['start_idxs'][seg_idx]
+
+                # end index for this segment
+                if seg_idx <9:
+                    end = self.abundance_threshold['start_idxs'][seg_idx+1]-1
+                else:
+                    end = row.shape[0]
+
+                # get threshold value for this row this segment
+                threshold = self.abundance_threshold['values'][row_idx,seg_idx]
+
+                # replace values in this range for this segment with threshold
+                row[start:end] = np.where(row[start:end]<threshold,threshold,row[start:end])
+
+        return "Threshold correction applied"
+
+    # endregion
 
     # region Noise Factor Calculation
 
     # calculates the noise factor (Nf) for the entire intensity_matrix
-    def calculate_noise_factor(self, intensity_matrix):
-        
-        # adds a row to be the TIC, sum of all m/z values for each scan
-        sum_row = np.sum(intensity_matrix, axis=0)
-        matrix = np.vstack(intensity_matrix,sum_row)
+    def calculate_noise_factor(self):
+
+        matrix = self.intensity_matrix
 
         # determines how many 13 scan segments that we will have, if the last segment is not full it is excluded from calculations
         num_segments = matrix.shape[1] // 13
@@ -280,7 +328,7 @@ class IntensityMatrix:
             # filters out any rows that "cross" the average intensity 6 or fewer times
             for row in removed_zeros:
                 avg = np.mean(row)
-                crossings = IntensityMatrix.count_crossings(row,avg)
+                crossings = self.count_crossings(row,avg)
 
                 if crossings > 6:
                     crossing_filtered.append(row)
@@ -298,14 +346,16 @@ class IntensityMatrix:
             # iterate through all rows of the segment
             for row in segment:
                 # calculate noise factor for current row
-                current_nf = IntensityMatrix.calculate_row_nf(row)
+                current_nf = self.calculate_row_nf(row)
                 # append result to median_devs list
                 segment_nfs.append(current_nf)
 
             # adds the segment noise factors to the master list
             noise_factors.append(segment_nfs)
 
-            return np.median(noise_factors)
+            self.noise_factor = np.median(noise_factors)
+
+            return f"Noise Factor calculated: Nf = {self.noise_factor}"
     
     # counts the number of times the values of an array "cross" a given average value
     def count_crossings(self,row,avg):
@@ -325,28 +375,28 @@ class IntensityMatrix:
         # calculate deviation from the mean for all members of row
         deviations = np.abs(row-mean)
 
+        # calculat noise factor
+        nf = np.median(deviations)/sqrt_of_mean
+        
         # return the median of the deviations / sqrt of the mean (Nf for that row)
-        return np.median(deviations)/sqrt_of_mean
+        return nf
 
     # endregion
 
     # region Finding Maxima
 
-    # finds the peaks (maxima and bounds) for each row of a given intensity matrix and the tic
-    def find_peaks(self, intensity_matrix):
-        
-        # adds a TIC row
-        sum_row = np.sum(intensity_matrix, axis=0)
-        matrix = np.vstack(intensity_matrix,sum_row)
+    # finds the peaks (maxima and bounds) for each row of a given intensity matrix and the tic, last row is TIC
+    def identify_peaks(self, matrix):
 
-        # array to hold the lists of peak values, one list for each m/z row 
-        peaks = np.empty_like(matrix.shape[0])
+        # array to hold the lists of peak values, each entry of peaks corrosponds to a single m/z row in same order as unique_mzs
+        peaks = []
 
-        for idx,row in enumerate(matrix):
-
+        for row in matrix:
             row_peaks = self.find_maxima(row)
-            peaks[idx] = row_peaks
+            peaks.append(row_peaks)
         
+        self.peak_list = peaks
+
         return peaks
 
     # finds local maxima and bounds of peaks for a given 1D array
@@ -356,7 +406,7 @@ class IntensityMatrix:
         range = array[12:-12]
 
         # finds the local maxima of the given array, stores their index
-        max_idxs, _ = find_peaks(range, height = self.noise_factor * 5)
+        max_idxs, _ = find_peaks(range,prominence=self.noise_factor * 1000)
 
         # Shifts indices found in the range for use in the original array
         max_idxs += 12
@@ -371,14 +421,36 @@ class IntensityMatrix:
             left_bound = self.find_bound(array,max,-1)
             # find the right bound of the deconvolution window
             right_bound = self.find_bound(array,max,1)
+            
+            # skip if peak is less than 3 scans wide
+            if right_bound - left_bound < 3:
+                continue
 
-            max_bounds = {
+            # calculate baseline
+            ten_baseline = self.tentative_baseline(left_bound,right_bound,array)
+            baseline = self.least_squares_baseline(left_bound,right_bound,array,ten_baseline)
+
+            # calcluate quadratic fit for peak
+            fit = self.quadratic_fit(array,max)
+
+            # grab the precise location and height of the peak
+            precise_max_location = fit['x_values'][1]
+            precise_max_height = fit['y_values'][1] - (baseline['slope']*(precise_max_location-baseline['left_bound']) + baseline['y_int'])
+
+            max_info = {
                 'left_bound' : left_bound,
                 'right_bound' : right_bound,
-                'center' : max
+                'center' : max,
+                'precise_max_location' : precise_max_location,
+                'precise_max_height' : precise_max_height,
+                'fit' : fit
             }
 
-            maxima.append(max_bounds)
+            # accept peak if it passes threshold check
+            if self.threshold_check(array,max,precise_max_height):
+                maxima.append(max_info)
+
+        self.peak_list = maxima
 
         # returns list of dictionary entries containing left bound, right bound, and center for each max (index values)
         return maxima
@@ -386,7 +458,7 @@ class IntensityMatrix:
     # finds the left or right deconvolution bound for a given maxima, step = 1 for right bound step = -1 for left bound
     def find_bound(self, array, center, step):
 
-        nf = self.calculate_noise_factor(array)
+        nf = self.noise_factor
         counter = 1 * step
         min_value = array[center]
         max_value = array[center]
@@ -412,77 +484,50 @@ class IntensityMatrix:
         # if no previous checks returned a value close window at 12 steps from the max
         return center+step*12
     
-    #def reject_peak(self, array, center, left_bound, right_bound):
+    # finds a quadratic fit for a set of 3 points in an array
+    def quadratic_fit(self, array, center):
+
+        # x values for fit, the center index and its two direct neighbors
+        x_points = np.array([center-1, center, center+1])
+        # y values for fit, from row corrosponding to x values
+        y_points = array[x_points]
+
+        # perform quadratic numpy polyfit, returning coefficients in a,b,c for ax^2 + bx + c form
+        coeffs = np.polyfit(x_points, y_points, 2)
+        a,b,c = coeffs
+
+        # calcluate the precise maxima of the fit
+        max_x = -b/(2*a)
+
+        # array of left point(max_x-1), max, and right point (max_x +1)
+        x_values = np.array([max_x-1, max_x, max_x+1]).astype(float)
+        # array of y values corrosponding to x_values 
+        y_values = a*x_values**2 + b*x_values + c
+
+        fit_result = {
+            'x_values' : x_values,
+            'y_values' : y_values,
+            'coeffs' : coeffs
+        }
+        print(fit_result)
+        return fit_result
+    
+    # checks if peak is above rejection threshold (4 noise units is base but we can adjust in the future)
+    def threshold_check(self, row, peak_idx, height):
+
+        threshold = 4 * self.noise_factor * row[peak_idx]**0.5 
+
+        if height < threshold:
+            return False
+        else:
+            return True
 
     # endregion
-
-    # finds a quadratic fit for a set of 3 points, returns a dictionary 3 x_values, 3 y_values (based on quadratic fit) and the a, b, c coefficients for the fit
-    def quadratic_fit(self, row_idx, center_idxs):
-
-        # pulls the row we are working on from the intensity matrix
-        row = self.intensity_matrix[row_idx]
-
-        # array for holding the results
-        results = []
-
-        # loops over all indices in center_idxs and calcuates their quadratic fit
-        for center in center_idxs:
-            
-            # x values for fit, the center index and its two direct neighbors
-            x_points = np.array([center-1, center, center+1])
-            # y values for fit, from row corrosponding to x values
-            y_points = row[x_points]
-
-            # perform quadratic numpy polyfit, returning coefficients in a,b,c for ax^2 + bx + c form
-            coeffs = np.polyfit(x_points, y_points, 2)
-            a,b,c = coeffs
-
-            # calcluate the precise maxima of the fit
-            max_x = -b/(2*a)
-            # array of left point(max_x-1), max, and right point (max_x +1)
-            x_values = np.array([max_x-1, max_x, max_x+1])
-            # array of y values corrosponding to x_values 
-            y_values = a*x_values**2 + b*x_values + c
-
-            fit_result = {
-                'x_values' : x_values,
-                'y_values' : y_values,
-                'coeffs' : coeffs
-            }
-            
-            results.append(fit_result)
-
-        return results
-
-    # calculates the uniqueness value for each m/z in 10 approximately equal time chunks
-    def calculate_uniqueness(self, intensity_matrix):
-        
-        # sores the uniqueness values for each m/z for each segment
-        uniqueness_values = np.zeros((len(self.unique_mzs),10))
-        
-        # splits array into 10 approximately equal segments
-        segments = np.array_split(intensity_matrix)
-
-        for seg_idx,segment in enumerate(segments):
-            for row_idx, row in enumerate(segment):
-
-                # counts nonzero elements in this row
-                counter = np.count_nonzero(row)
-                # length of the row
-                row_size = len(row)
-
-                # calculates the fraction of entries in row that are nonzero
-                nonzero_fraction = counter/row_size
-
-                # appends nonzero_fraction to proper place in the uniqueness_values matrix
-                uniqueness_values[row_idx,seg_idx] = nonzero_fraction
-        
-        return uniqueness_values
 
     # region Baseline Calculation
 
     # calculates a tentative baseline for a percieved component
-    def tentative_baseline(left_bound,right_bound,array):
+    def tentative_baseline(self,left_bound,right_bound,array):
 
         # create componenet array 
         component_array = array[left_bound:right_bound+1]
@@ -508,10 +553,16 @@ class IntensityMatrix:
         # generate tentative baseline array
         tentative_baseline = m * x + b
 
+        # shfit baseline down if any of its values are greater than the value of input array at same index
+        for idx, element in enumerate(tentative_baseline):
+            if element > component_array[idx]:
+                diff = element - component_array[idx]
+                tentative_baseline -= diff
+
         return tentative_baseline
 
     # calculates a least squars baseline based on a component array and its tentative baseline
-    def least_squares_baseline(left_bound,right_bound,array, ten_baseline):
+    def least_squares_baseline(self,left_bound,right_bound,array, ten_baseline):
         
         # create componenet array 
         component_array = array[left_bound:right_bound+1]
@@ -522,23 +573,65 @@ class IntensityMatrix:
         # get the indicies for the smallest 50% of values in the array
         sorted_indices = np.argsort(adjusted_abundances)
         smallest_indices = sorted_indices[:len(component_array)//2]
-
+        
         # get y values (abundances) for least squares baseline estimation
         smallest_abundances = component_array[smallest_indices]
-        
+
         # linear least squares fitting 
         m, b = np.polyfit(smallest_indices, smallest_abundances, 1)
 
         # generate a bseline for the entire compoonent array
-        baseline = m * np.arange(len(component_array)) + b
+        baseline_array = m * np.arange(len(component_array)) + b
+
+        # create dictioary to hold values
+        bl = {
+            'left_bound' : left_bound,
+            'right_bound' : right_bound,
+            'baseline_array' : baseline_array,
+            'slope' : m,
+            'y_int' : b
+        }
         
-        return baseline
+        return bl
 
     # endregion
 
-    # calculates the sharpness for a single set of points
-    def calculate_sharpness(self, row, start_idx, end_idx):
-        
-        sharpness = (row[start_idx] - row[end_idx]) / (abs(start_idx - end_idx) * self.noise_factor * (row[start_idx]**0.5))
+    # region Component Perception
 
-        return sharpness
+    # calculates the sharpness for a single point
+    def calculate_sharpness(self, peak_dict):
+        
+        # coefficients for the quadratic fit of a peak, y = axx + bx + c
+        a,b,c = peak_dict['fit']['coeffs']
+
+        # find the max location, subtract left_bound because coefficients are calculated for a subarray centered around each peak
+        max_location = peak_dict['precise_max_location'] - peak_dict['left_bound']
+        return None
+    
+
+    # endregion
+
+    # calculates the uniqueness value for each m/z in 10 approximately equal time chunks
+    def calculate_uniqueness(self, intensity_matrix):
+        
+        # sores the uniqueness values for each m/z for each segment
+        uniqueness_values = np.zeros((len(self.unique_mzs),10))
+        
+        # splits array into 10 approximately equal segments
+        segments = np.array_split(intensity_matrix)
+
+        for seg_idx,segment in enumerate(segments):
+            for row_idx, row in enumerate(segment):
+
+                # counts nonzero elements in this row
+                counter = np.count_nonzero(row)
+                # length of the row
+                row_size = len(row)
+
+                # calculates the fraction of entries in row that are nonzero
+                nonzero_fraction = counter/row_size
+
+                # appends nonzero_fraction to proper place in the uniqueness_values matrix
+                uniqueness_values[row_idx,seg_idx] = nonzero_fraction
+        
+        return uniqueness_values
