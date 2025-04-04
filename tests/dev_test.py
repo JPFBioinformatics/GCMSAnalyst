@@ -43,8 +43,8 @@ def generate_synthetic_chromatogram(length=3600, num_peaks=1, noise_level=250, p
 # region Graphing
 
 # generate synthetic chromatograms
-x1, chromatogram_1 = generate_synthetic_chromatogram(peak_center=2000,peak_width=2,peak_height=50000)
-x2, chromatogram_2 = generate_synthetic_chromatogram(peak_center=2006,peak_width=2,peak_height=40000)
+x1, chromatogram_1 = generate_synthetic_chromatogram(peak_center=2000,peak_width=2,peak_height=500000)
+x2, chromatogram_2 = generate_synthetic_chromatogram(peak_center=2006,peak_width=2,peak_height=400000)
 combined_chromatogram = chromatogram_1 + chromatogram_2
 
 # generate IntensityMatrix objects for each chromatogram
@@ -64,9 +64,9 @@ print(f"Chrom 2 Nf: {chrom2.noise_factor}")
 print(f"Convoluted chrom Nf: {c_chrom.noise_factor}")
 
 # finds maxima and bounds for component array for chromatogram 1 and 2
-c1_maxima = chrom1.identify_peaks(chrom1.intensity_matrix)
-c2_maxima = chrom2.identify_peaks(chrom2.intensity_matrix)
-conv_maxima = c_chrom.identify_peaks(c_chrom.intensity_matrix)
+c1_maxima = chrom1.identify_peaks(chrom1.intensity_matrix,prom=chrom1.noise_factor*1000)
+c2_maxima = chrom2.identify_peaks(chrom2.intensity_matrix,prom=chrom2.noise_factor*1000)
+conv_maxima = c_chrom.identify_peaks(c_chrom.intensity_matrix,prom=c_chrom.noise_factor*1000)
 print("")
 print("Maxima info:")
 print(c1_maxima)
@@ -94,9 +94,6 @@ lsb_conv2 = c_chrom.least_squares_baseline(conv_maxima[0][1]['left_bound'],conv_
 
 bl_center = (conv_maxima[0][0]['center'] - conv_maxima[0][0]['left_bound'])
 peak1_height = c_chrom.intensity_matrix[0][conv_maxima[0][0]['center']] - lsb_conv1['baseline_array'][bl_center]
-print(f"Calculated height of peak: {peak1_height}")
-print(f"True height of peak: {chrom1.intensity_matrix[0][c1_maxima[0][0]['center']]}")
-print(f"Height of convoluted peak: {c_chrom.intensity_matrix[0][c1_maxima[0][0]['center']]}")
 
 # calculate the height of each chromatogram and plot it as a green vertical line
 chrom1_height = c1_maxima[0][0]['precise_max_height']
@@ -108,6 +105,7 @@ print(f"Location: {chrom1_location}")
 print(f"Height: {chrom1_height}")
 print(f"Bottom of height line: {chrom1_precise_max_baseline}")
 print(f"Top of height line: {chrom1_precise_max_top}")
+print("")
 
 chrom2_height = c2_maxima[0][0]['precise_max_height']
 chrom2_location = c2_maxima[0][0]['precise_max_location']
@@ -118,6 +116,7 @@ print(f"Location: {chrom2_location}")
 print(f"Height: {chrom2_height}")
 print(f"Bottom of height line: {chrom2_precise_max_baseline}")
 print(f"Top of height line: {chrom2_precise_max_top}")
+print("")
 
 conv1_height = conv_maxima[0][0]['precise_max_height']
 conv1_location = conv_maxima[0][0]['precise_max_location']
@@ -128,7 +127,9 @@ conv2_height = conv_maxima[0][1]['precise_max_height']
 conv2_location = conv_maxima[0][1]['precise_max_location']
 conv2_precise_max_baseline = lsb_conv2['slope']*(conv2_location-lsb_conv2['left_bound'])+lsb_conv2['y_int']
 conv2_precise_max_top = conv2_precise_max_baseline + conv2_height
-
+print("Conv peaks height information:")
+print(f"peak 1 height: {conv1_height}")
+print(f"peak 2 height: {conv2_height}")
 
 # Plot
 fig,ax = plt.subplots(nrows = 3, ncols = 1, figsize = (10,10), sharex = True, sharey = True)

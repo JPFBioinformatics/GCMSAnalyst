@@ -28,10 +28,6 @@ scan_no = np.array([entry['scan_id'] for entry in int_matrix.spectra_metadata], 
 # make the first scan_no 0 so it aligns with index values for peak finding
 scan_no -= 1
 
-# Time
-time = np.array([entry['scan_start_time'] for entry in int_matrix.spectra_metadata], dtype = float)
-print(f"Number of time points sampled: {len(time)}")
-
 # Total ion current
 tic = np.array(int_matrix.intensity_matrix[-1], dtype = float)
 
@@ -42,10 +38,15 @@ intensity_matrix = int_matrix.intensity_matrix
 mz_list = int_matrix.unique_mzs
 print(f"Number of unique m/z values: {len(mz_list)}")
 
+# Time
+time = np.array([entry['scan_start_time'] for entry in int_matrix.spectra_metadata], dtype = float)
+print(f"Number of time points sampled: {len(time)}")
+
 # endregion
 
-# region Determine the time accounted for in each scan, average: 0.1052 sec/scan +/- 7.815e-6 (0.074%) for SC1_TMS
-"""spectra_width = []
+# region Determine the time accounted for in each scan, average: 0.01052 sec/scan +/- 7.815e-6 (0.074%) for SC1_TMS
+"""
+spectra_width = []
 for i in range(1,len(time)-1):
     duration = float(time[i]) - float(time[i-1])
     spectra_width.append(duration)

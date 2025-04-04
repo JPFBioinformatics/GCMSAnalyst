@@ -52,162 +52,6 @@ class IntensityMatrix:
         self._spectra_metadata = value
     #endregion
 
-    # region OG Baseline, probably gonna delete
-    
-    # Uses correct_baseline method to iteratively correct the baseline noise for a given array, not the whole matrix
-    @staticmethod
-    def iterative_baseline_correction(intensity_array):
-
-        # Compute first, single chunk baseline estimation
-        smoothed_baseline = IntensityMatrix.correct_baseline(intensity_array, deg = 8, chunks = 1, low_chunk = 100)
-
-        # Generates a corrected intensity array based on computed baseline
-        corrected_array = intensity_array - smoothed_baseline
-        # Sets any negative values in corrected array to 0
-        corrected_array = np.maximum(corrected_array, 0)
-
-        # Runs a second baseline correction with a finer chunk size and a lower degree polynomial fit
-        second_baseline = IntensityMatrix.correct_baseline(corrected_array, deg = 2, chunks = 20)
-
-        # Generates a final corrected array based on the resultant corrected array from first correction
-        final_array = corrected_array - second_baseline
-        # Sets any negative values in final array to 0
-        final_array = np.maximum(final_array, 0)
-
-        return final_array
-
-    # region Baseline Helpers
-    @staticmethod
-    def correct_baseline(intensity_array, deg = 8, chunks = 1, low_chunk = 100):
-
-        # Stores the baseline correction values array returned by peakutils baseline() function
-        baseline_values = np.zeros_like(intensity_array)
-
-        # Set the size of the chunks you will be processing
-        chunk_size = len(intensity_array) // chunks
-        # Ensures the chunk size is within reasonable bounds
-        if chunk_size < low_chunk:
-            chunk_size = low_chunk
-        if chunk_size > 1500:
-            chunk_size = 1500
-
-        # Sets min_chunk_size, if a chunk is smaller than this it will be combined with previous chunk
-        min_chunk_size = chunk_size // 2
-
-        # Sets the number of chunks, ensuring an extra is added if needed
-        num_chunks = len(intensity_array) // chunk_size
-        if len(intensity_array) % chunk_size != 0:
-            num_chunks += 1
-
-        # Iterate over the chunks
-        for i in range(num_chunks):
-            start_idx = i * chunk_size
-            end_idx = (i + 1) * chunk_size
-
-            # Ensure the last chunk doesn't go out of bounds
-            if end_idx > len(intensity_array):
-                    end_idx = len(intensity_array)
-
-            # Intensities for this chunk
-            segment_intensities = intensity_array[start_idx:end_idx]
-
-            # If this is the last chunk, and it's smaller than the threshold combine it with the previous chunk
-            if i == num_chunks - 1 and len(segment_intensities) < min_chunk_size:
-                # Combine with the second-to-last chunk
-                prev_chunk_end_idx = start_idx
-                prev_chunk_start_idx = (i - 1) * chunk_size
-                if prev_chunk_end_idx < len(intensity_array):  # If not the very first chunk
-                    segment_intensities = np.concatenate([
-                        intensity_array[prev_chunk_start_idx:prev_chunk_end_idx],
-                        segment_intensities
-                    ])
-
-                    # Calculate the baseline for the combined chunk
-                    bl = baseline(segment_intensities, deg = deg)
-
-
-                    # Store the baseline values
-                    baseline_values[prev_chunk_start_idx:end_idx] = bl
-                    #Removes negative values from basleine correction array
-                    baseline_values = np.maximum(baseline_values,0)
-
-                    continue  # Skip processing the last chunk as it's already combined
-
-            # Apply baseline correction to the chunk
-            chunk_baseline = baseline(segment_intensities, deg = deg)
-
-            # Store the baseline values
-            baseline_values[start_idx:end_idx] = chunk_baseline
-            #removes negative values from baseline correction array
-            baseline_values = np.maximum(baseline_values,0)
-
-        # Uses Savitzky-Golay smoothing to make sure chunk edges merge smoothly
-        sg_window = IntensityMatrix.sg_window_length(chunk_size)
-
-        smoothed_baseline = savgol_filter(baseline_values, window_length = sg_window, polyorder = 2)
-
-        return smoothed_baseline
-
-    # calculates a dynamic window length for smoothing algorithm
-    @staticmethod
-    def sg_window_length(chunk_size):
-        wl = chunk_size // 10
-        if wl % 2 == 0:
-             wl += 1
-        return wl
-
-    @staticmethod
-    def polynomial_correct_negative_values(array, window_size = 5, degree = 1):
-
-        # Creates a list of all indices of array where the value is negative
-        negative_indices = np.where(array < 0)[0].astype(int)
-
-        # Returns original array if no negative indices
-        if len(negative_indices) == 0:
-            return array
-
-        clusters = []
-        current_cluster = [negative_indices[0]]
-
-        for i in range(1, len(negative_indices)):  # Iterate through negative indices starting from the second element
-            if negative_indices[i] == negative_indices[i - 1] + 1:
-                # If the current index is exactly 1 greater than the previous, it's part of the same cluster
-                current_cluster.append(negative_indices[i])
-            else:
-                # If the current index is NOT consecutive, store the current cluster and start a new one
-                clusters.append(current_cluster)
-                current_cluster = [negative_indices[i]]  # Start a new cluster with the current index
-
-        #adds the last cluster of negative values to the list
-        clusters.append(current_cluster)
-
-        # Iterates through each cluster of negative indices, taking window_size points from each side of the cluster,
-        # then only uses positive values in that segment to create an n degree polynomial fit (linear, 1, is usually
-        # plenty) for that segment and then replaces negative values in that segment with predictions from the fit
-        for cluster in clusters:
-            start_idx = max(int(cluster[0]) - window_size, 0)
-            end_idx = max(int(cluster[-1] + 1) + window_size, len(array))
-
-            segment = array[start_idx : end_idx]
-            x = np.arange(start_idx, end_idx)
-            y = segment
-
-            valid_x = x[y >= 0]
-            valid_y = y[y >= 0]
-
-            if len(valid_x) > degree:
-                fit = np.polyfit(valid_x, valid_y, deg = degree)
-                fit_line = np.polyval(fit,x)
-
-                array[start_idx : end_idx] = np.where(
-                    array[start_idx : end_idx] < 0, fit_line, array[start_idx : end_idx]
-                )
-
-        return array
-    #endregion
-
-    # endregion
-
     # region Abundance Threshold
 
     # calculates At value to replace 0 values with
@@ -245,6 +89,8 @@ class IntensityMatrix:
         # for each segment count the number of times a 0 value is followed by a nonzero value and store in transitions array
         for seg_idx,segment in enumerate(segments):
             for row_idx, row in enumerate(segment):
+
+                # create array with 1 in any position where a 0 to nonzero transition occurs
                 transitions = ((row[:-1] == 0) & (row[1:] > 0))
                 # number of 0 to nonzero transitions in row
                 num_transitions = np.sum(transitions)
@@ -269,16 +115,16 @@ class IntensityMatrix:
             'start_idxs' : segment_starts,
             'values' : threshold_values
         }
-
+ 
         self.abundance_threshold = threshold_dict
-
-        return "Threshold values calculated"
 
     # takes any value in the array that is below At for that segment for that m/z value and 
     def apply_threshold(self):
-        
+
+        matrix = self.intensity_matrix
+
         # iterate over each row, segment
-        for row_idx,row in enumerate(self.intensity_matrix):
+        for row_idx,row in enumerate(matrix):
             for seg_idx in range(10):
                 
                 # start index for this segment
@@ -286,7 +132,7 @@ class IntensityMatrix:
 
                 # end index for this segment
                 if seg_idx <9:
-                    end = self.abundance_threshold['start_idxs'][seg_idx+1]-1
+                    end = self.abundance_threshold['start_idxs'][seg_idx+1]
                 else:
                     end = row.shape[0]
 
@@ -296,7 +142,7 @@ class IntensityMatrix:
                 # replace values in this range for this segment with threshold
                 row[start:end] = np.where(row[start:end]<threshold,threshold,row[start:end])
 
-        return "Threshold correction applied"
+        self.intensity_matrix = matrix 
 
     # endregion
 
@@ -386,31 +232,35 @@ class IntensityMatrix:
     # region Finding Maxima
 
     # finds the peaks (maxima and bounds) for each row of a given intensity matrix and the tic, last row is TIC
-    def identify_peaks(self, matrix):
+    def identify_peaks(self, matrix, prom=None):
 
         # array to hold the lists of peak values, each entry of peaks corrosponds to a single m/z row in same order as unique_mzs
         peaks = []
 
         for row in matrix:
-            row_peaks = self.find_maxima(row)
+            row_peaks = self.find_maxima(row,prom=prom)
             peaks.append(row_peaks)
-        
+
         self.peak_list = peaks
 
         return peaks
 
     # finds local maxima and bounds of peaks for a given 1D array
-    def find_maxima(self, array):
+    def find_maxima(self, array, prom = None):
+
+        # set default prominance
+        if prom == None:
+            prom = self.noise_factor*100
 
         # Excludes the first and last 12 points from the search to prevent bounding errors
         range = array[12:-12]
 
         # finds the local maxima of the given array, stores their index
-        max_idxs, _ = find_peaks(range,prominence=self.noise_factor * 1000)
+        max_idxs, _ = find_peaks(range, prominence=prom)
 
         # Shifts indices found in the range for use in the original array
         max_idxs += 12
-        
+
         # list to hold dictionary entries containing left_bound, right_bound and center for each maxima
         maxima = []
 
@@ -422,8 +272,8 @@ class IntensityMatrix:
             # find the right bound of the deconvolution window
             right_bound = self.find_bound(array,max,1)
             
-            # skip if peak is less than 3 scans wide
-            if right_bound - left_bound < 3:
+            # width filter, skip peak if peak has less than 3 scans on either side of the peak
+            if right_bound - max < 3 or max - left_bound < 3:
                 continue
 
             # calculate baseline
@@ -436,23 +286,30 @@ class IntensityMatrix:
             # grab the precise location and height of the peak
             precise_max_location = fit['x_values'][1]
             precise_max_height = fit['y_values'][1] - (baseline['slope']*(precise_max_location-baseline['left_bound']) + baseline['y_int'])
+            precise_max_abundance = fit['y_values'][1]
+            
+            # finds the bin (0.1 of a scan) that the precise max is located within by truncating at 1 decimal point
+            max_bin = int(precise_max_location*10) / 10
 
+            # calculate convolution value for this peak
+            conv = self.convolution_value(array,max)
+            
             max_info = {
                 'left_bound' : left_bound,
                 'right_bound' : right_bound,
                 'center' : max,
                 'precise_max_location' : precise_max_location,
                 'precise_max_height' : precise_max_height,
-                'fit' : fit
+                'max_abundance' : precise_max_abundance,
+                'bin' : max_bin,
+                'conv_value' : conv
             }
 
             # accept peak if it passes threshold check
             if self.threshold_check(array,max,precise_max_height):
                 maxima.append(max_info)
 
-        self.peak_list = maxima
-
-        # returns list of dictionary entries containing left bound, right bound, and center for each max (index values)
+        # returns list of dictionary entries containing maxima information
         return maxima
 
     # finds the left or right deconvolution bound for a given maxima, step = 1 for right bound step = -1 for left bound
@@ -509,7 +366,7 @@ class IntensityMatrix:
             'y_values' : y_values,
             'coeffs' : coeffs
         }
-        print(fit_result)
+
         return fit_result
     
     # checks if peak is above rejection threshold (4 noise units is base but we can adjust in the future)
@@ -521,6 +378,21 @@ class IntensityMatrix:
             return False
         else:
             return True
+
+    # calculates convolution value for a single peak, used to see if peak is singlet or not
+    def convolution_value(self,row,max):
+        
+        # holds the sum of all rates of sharpness calculated for the peak
+        rate_sum = 0
+
+        # loop over all the scans in the 3 scan window and calculate rate for each
+        for i in range(1,4):
+            term1 = (row[max+(i+1)] - row[max+i]) / row[max+i]
+            term2 = (row[max-(i+1)] - row[max-i]) / row[max-i]
+
+            rate_sum += term1+term2
+
+        return rate_sum
 
     # endregion
 
@@ -562,7 +434,7 @@ class IntensityMatrix:
         return tentative_baseline
 
     # calculates a least squars baseline based on a component array and its tentative baseline
-    def least_squares_baseline(self,left_bound,right_bound,array, ten_baseline):
+    def least_squares_baseline(self,left_bound,right_bound,array,ten_baseline):
         
         # create componenet array 
         component_array = array[left_bound:right_bound+1]
@@ -598,17 +470,125 @@ class IntensityMatrix:
 
     # region Component Perception
 
-    # calculates the sharpness for a single point
-    def calculate_sharpness(self, peak_dict):
+    # finds the bin (1 scan = 10 bins) to place maxima in based on sharpness of peak
+    def bin_peaks(self):
         
-        # coefficients for the quadratic fit of a peak, y = axx + bx + c
-        a,b,c = peak_dict['fit']['coeffs']
+        dict_list = self.peak_list
 
-        # find the max location, subtract left_bound because coefficients are calculated for a subarray centered around each peak
-        max_location = peak_dict['precise_max_location'] - peak_dict['left_bound']
-        return None
+        # iterates over all peaks in a list of lists of dictionaries dict_list to find the true bin to put that peak in
+        for row_idx, peaks in enumerate(dict_list):
+            for peak in peaks:
+
+                # value that stores how much the bin the pak is currently in should be shifted by
+                bin_offset = 0
+
+                # maximum sharpness value calculated within the range
+                max_sharpness = self.adjacent_bin_sharpness(row_idx,peak)
+
+                # range in which to calculate sharpness values to find correct bin
+                range  = int(0.5+50/max_sharpness)
+
+                # max abundance and location of peak 
+                abuncance = peak['max_abuncance']
+                location = peak['bin']
+
+                # checks through all bins in range to see if any have a larger sharpness than the origonal bin
+                for i in range(1,range+1):
+                    right_sharpness = self.adjacent_bin_sharpness(row_idx,abuncance,location+0.1*i)
+                    if right_sharpness > max_sharpness:
+                        max_sharpness = right_sharpness
+                        bin_offset = i
+                
+                    left_sharpness = self.adjacent_bin_sharpness(row_idx,abuncance,location-0.1*i)
+                    if left_sharpness>max_sharpness:
+                        max_sharpness = left_sharpness
+                        bin_offset = -i
+
+                # update peak dictionary parameters with the true bin and associated sharpness
+                peak['bin'] += 0.1*bin_offset
+                peak['sharpness'] = max_sharpness
+                # number of bins (each bin is 0.1 of a scan) to look to for model peak generation
+                peak['model_range'] = int(0.5+50/max_sharpness)
     
+    # calculates the sharpness for a bin and the bins directly on its left and right and returns the sum
+    def adjacent_bin_sharpness(self,row_idx,max_bin,max_location):
+        left_sharpness = self.avg_sharpness(row_idx,max_bin,max_location,adjacency=(-0.1))
+        right_sharpness = self.avg_sharpness(row_idx,max_bin,max_location,adjacency=(0.1))
+        center_sharpness = self.avg_sharpness(row_idx,max_bin,max_location)
 
+        return sum(left_sharpness,right_sharpness,center_sharpness)
+    
+    # calculates the average sharpness for a single maxima
+    def avg_sharpness(self, row_idx, max_abundance,max_bin, step = 3, adjacency = 0):
+        
+        # intensity at max 
+        A_max = max_abundance
+
+        # find the bin we are working from
+        max_bin += adjacency
+
+        # row we are working on right now
+        row = self.intensity_matrix[row_idx]
+
+        l_sharpnesses = []
+        r_shaprnesses = []
+
+        for i in range(1,step+1):
+            
+            # x value that we need to genearte an estimate of intensity for
+            right_x = max_bin+i
+            left_x = max_bin-i
+
+            # (x,y) paris for linear fit
+            # right side
+            right1_x = int(right_x)
+            right1_y = row[right1_x]
+            right2_x = right1_x+1
+            right2_y = row[right2_x]
+            # left side
+            left1_x = int(left_x)
+            left1_y = row[left1_x]
+            left2_x = left1_x-1
+            left2_y = row[left2_x]
+            
+            # generate fit
+            r_m,r_b = self.linear_fit(right1_x,right1_y,right2_x,right2_y)
+            l_m,l_b = self.linear_fit(left1_x,left1_y,left2_x,left2_y)
+
+            # apply fit
+            r_An = r_m*right_x + r_b
+            l_An = l_m*left_x + l_b
+
+            # calculate sharpness
+            right = self.calculate_sharpness(A_max,r_An,i)
+            left = self.calculate_sharpness(A_max, l_An,i)
+
+            # append shaprnesses to lists
+            r_shaprnesses.append(right)
+            l_sharpnesses.append(left)
+        
+        r_max = max(r_shaprnesses)
+        l_max = max(l_sharpnesses)
+
+        return ((r_max + l_max)/2)
+    
+    # creates a linear fit based on 2 points
+    def linear_fit(self,x1,y1,x2,y2):
+
+        slope = (y2-y1)/(x2-x1)
+        y_int = y1-slope*x1
+
+        return slope,y_int
+    
+    # calculates the shaprness for a a point with A_n intensity n scans from the peak max with intensity A_max
+    def calculate_sharpness(self,A_max,A_n,n):
+
+        sharpness = (A_max-A_n)/(n*self.noise_factor*(A_max**0.5))
+
+        return sharpness
+    
+    
+    
     # endregion
 
     # calculates the uniqueness value for each m/z in 10 approximately equal time chunks
