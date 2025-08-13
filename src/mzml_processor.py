@@ -72,11 +72,12 @@ class MzMLProcessor:
 
         # determine int bin values such that n is added to binned_mzs if n-0.3 < mz <= n+0.7
         for mz in unique_mzs:
-            if (mz + 0.3) > (int(mz) + 1) and int(mz+1) not in binned_mzs:
-                binned_mzs.append(int(mz)+1)
-            if (mz - 0.7) <= int(mz) and int(mz) not in binned_mzs:
-                binned_mzs.append(int(mz))
-        
+
+            binned_mass = int(mz+0.3)
+            
+            if binned_mass not in binned_mzs:
+                binned_mzs.append(binned_mass)
+
         # dictionary that will hold the binned_mz : indices of unique_mzs to bin
         bin_tracker = {}
 
@@ -207,4 +208,4 @@ class MzMLProcessor:
         output_matrix.calculate_noise_factor()
 
         return output_matrix
-        
+         

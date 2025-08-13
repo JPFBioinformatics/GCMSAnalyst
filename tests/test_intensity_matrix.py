@@ -77,7 +77,7 @@ print(f"Number of peaks identified in TIC: {len(tic_peaks)}")
 # endregion
 
 # region Graphing the TIC
-
+"""
 # create plot
 plt.plot(scan_no,tic)
 
@@ -92,5 +92,35 @@ plt.xlabel("Scan")
 plt.ylabel("Intensity")
 
 plt.show()
-
+"""
 # endregion"
+
+# region Graphing maxima histograms
+bin_list = int_matrix.extract_maxima_histogram()
+
+bin_counts = {}
+bin_heights = {}
+
+for entry in bin_list:
+    
+    if entry['bin'] in bin_counts:
+        bin_counts[entry['bin']] += 1
+        bin_heights[entry['bin']] += entry['height']
+
+    else:
+        bin_counts[entry['bin']] = 1
+        bin_heights[entry['bin']] = entry['height']
+
+filtered_bins  = [key for key,value in bin_counts.items() if value >= 1]
+
+counts = [bin_counts[key] for key in filtered_bins]
+hieghts = [bin_heights[key] for key in filtered_bins]
+
+plt.bar(filtered_bins,counts,width = 0.1,color = 'skyblue',edgecolor = 'black',align = 'edge')
+
+plt.xlabel('Bin')
+plt.ylabel('Count')
+plt.title('Maxima Count Histogram')
+
+plt.show()
+# endregion

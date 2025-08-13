@@ -237,8 +237,11 @@ class IntensityMatrix:
         # array to hold the lists of peak values, each entry of peaks corrosponds to a single m/z row in same order as unique_mzs
         peaks = []
 
-        for row in matrix:
-            row_peaks = self.find_maxima(row,prom=prom)
+        for row_idx,row in enumerate(matrix):
+
+            ion = self.unique_mzs[row_idx]
+
+            row_peaks = self.find_maxima(row,ion,prom=prom)
             peaks.append(row_peaks)
 
         self.peak_list = peaks
@@ -246,7 +249,7 @@ class IntensityMatrix:
         return peaks
 
     # finds local maxima and bounds of peaks for a given 1D array
-    def find_maxima(self, array, prom = None):
+    def find_maxima(self, array, ion, prom = None):
 
         # set default prominance
         if prom == None:
@@ -275,6 +278,9 @@ class IntensityMatrix:
             # width filter, skip peak if peak has less than 3 scans on either side of the peak
             if right_bound - max < 3 or max - left_bound < 3:
                 continue
+            
+            # generate peak clusters
+
 
             # calculate baseline
             ten_baseline = self.tentative_baseline(left_bound,right_bound,array)
@@ -302,7 +308,8 @@ class IntensityMatrix:
                 'precise_max_height' : precise_max_height,
                 'max_abundance' : precise_max_abundance,
                 'bin' : max_bin,
-                'conv_value' : conv
+                'conv_value' : conv,
+                'ion' : ion
             }
 
             # accept peak if it passes threshold check
@@ -379,6 +386,26 @@ class IntensityMatrix:
         else:
             return True
 
+    # clusters peaks for baseline correction and simple deconvolution
+    def cluster_peaks(self):
+
+        # loop over rows in peak_list array
+        for row_idx,row in enumerate(self.peak_list):
+
+            # grab data from current row for calcuations
+            current_row = self.intensity_matrix[row_idx]
+
+            # loop over each entry in this row of peaks
+            for idx,entry in enumerate(row):
+                
+                # calculate the ratio of the max to the right and left bound of this peak
+                l_ratio = current_row['center'] / current_row[entry['left_bound']]
+                r_ratio = current_row['center'] / current_row[entry['right_bound']]
+
+                # check that there is a next entry in peaks and wether it is within 3 scans of this entry
+                if (idx+1) < len(row) and (row[idx+1]['left_bound']-entry['right_bound']) < 3:
+                    return None
+
     # calculates convolution value for a single peak, used to see if peak is singlet or not
     def convolution_value(self,row,max):
         
@@ -393,7 +420,6 @@ class IntensityMatrix:
             rate_sum += term1+term2
 
         return rate_sum
-
     # endregion
 
     # region Baseline Calculation
@@ -587,8 +613,27 @@ class IntensityMatrix:
 
         return sharpness
     
-    
-    
+    # generates a histogram of peak maximization bin
+    def extract_maxima_histogram(self):
+
+        # generate list to hold all bin information needed for graphing
+        bin_list = []
+
+        # loop through each row of peaks
+        for row in self.peak_list:
+            for peak in row:
+
+                # maximization bin, height (from baseline), and ion associated with this peak
+                bin_dict = {
+                    'bin' : peak['bin'],
+                    'height' : peak['precise_max_height'],
+                    'ion' : peak['ion']
+                }
+
+                bin_list.append(bin_dict)
+
+        return bin_list
+
     # endregion
 
     # calculates the uniqueness value for each m/z in 10 approximately equal time chunks

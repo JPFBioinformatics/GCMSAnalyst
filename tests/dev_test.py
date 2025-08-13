@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from intensity_matrix import IntensityMatrix
 
 # generates a synthetic chromatogram for testing
-def generate_synthetic_chromatogram(length=3600, num_peaks=1, noise_level=250, peak_center = None, peak_width = None, peak_height = None):
+def generate_synthetic_chromatogram(length=3600, num_peaks=1, noise_level=500, peak_center = None, peak_width = None, peak_height = None):
 
     # generat x values and empty y values array
     x = np.arange(length)
@@ -38,10 +38,8 @@ def generate_synthetic_chromatogram(length=3600, num_peaks=1, noise_level=250, p
 
     return x, chromatogram.reshape(1,-1)
 
-# endregion
-
-# region Graphing
-
+# region Graphing synthetic chromatograms
+"""
 # generate synthetic chromatograms
 x1, chromatogram_1 = generate_synthetic_chromatogram(peak_center=2000,peak_width=2,peak_height=500000)
 x2, chromatogram_2 = generate_synthetic_chromatogram(peak_center=2006,peak_width=2,peak_height=400000)
@@ -175,5 +173,6 @@ ax[2].set_ylabel('Intensity')
 ax[2].legend()
 
 plt.show()
-
+"""
 # endregion
+
